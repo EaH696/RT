@@ -70,13 +70,17 @@ and sandbox **services** with the orchestrator wired to them over HTTP+JSON
 exploit requests refused across the language boundary — the tool-adapter
 contract, the **egress proxy** (physically refuses out-of-scope connections at
 the network layer, delegating the decision to the policy-gate) with the
-runtime abstraction that pins a tool's only egress route to it, and the report
+runtime abstraction that pins a tool's only egress route to it, the
+**tamper-evident hash-chained audit log** (`rt audit` — every operator approval
+and agent action chained by SHA-256; `verify` detects any edit, deletion, or
+reorder; SQLite by default, Postgres backend for production), and the report
 generator — all with passing tests.
 
 **Stubbed (clear interfaces, wire next):** the production `ContainerRuntime`
 (gVisor/Firecracker — needs a host with the runtime; `LocalRuntime` works for
-dev), the operator console, and Postgres/Neo4j persistence + the hash-chained
-audit log.
+dev), the operator console, full graph persistence in Postgres/Neo4j (the
+engagement graph is file-based today; the audit log already persists), and the
+commander auto-planning loop.
 
 **Transport note:** inter-service calls use HTTP+JSON over stdlib so the core
 runs dependency-free on an air-gapped appliance. `proto/rt.proto` is the

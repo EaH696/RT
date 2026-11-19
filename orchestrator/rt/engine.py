@@ -69,16 +69,29 @@ def default_agent(model: str = "local-default", timeout: int = 900) -> AgentFn:
 
 class Engine:
     def __init__(self, store: Store, agent: AgentFn, *, worker: str = "executor",
-                 gate=None):
+                 gate=None, audit=None):
         """`gate`, if given, is a transport.GateClient (or anything with
         .check(target) -> Decision). When set, every task's target is validated
         against the remote Go policy-gate before dispatch — defense in depth on
         top of the local rt.scope check. A denial concludes the task as a note
-        and the loop moves on; it never silently runs out-of-scope work."""
+        and the loop moves on; it never silently runs out-of-scope work.
+
+        `audit`, if given, is an rt.audit.AuditLog; the loop records every
+        dispatch, gate denial, and conclusion to the tamper-evident log."""
         self.store = store
         self.agent = agent
         self.worker = worker
         self.gate = gate
+        self.audit = audit
+        try:
+            self._eid = store.load_project().get("engagement_id", "")
+        except Exception:
+            self._eid = ""
+
+    def _log(self, action: str, target: str, **details) -> None:
+        if self.audit is not None:
+            self.audit.record(self.worker, action, engagement_id=self._eid,
+                              target=target or "", **details)
 
     # -- one unit of work -------------------------------------------------- #
     def step(self) -> StepOutcome | None:
@@ -102,11 +115,14 @@ class Engine:
                     creator=self.worker, kind="note", target=target,
                     source_task=tid, title="out of scope",
                 )
+                self._log("task.blocked", target, task=tid, reason=decision.reason)
                 return StepOutcome(tid, "blocked", f["id"], decision.reason)
         # claim_task re-checks the confirmation gate under the store lock —
         # defense in depth against a task that became gated between frontier()
         # and here.
         self.store.claim_task(tid, worker=self.worker)
+        self._log("task.dispatch", task.get("target"), task=tid,
+                  tier=task.get("risk_tier"))
         template = TIER_TEMPLATE.get(task.get("risk_tier", "recon"), "recon")
 
         from .prompts import render_task  # local import: avoids cycle at import time
@@ -147,6 +163,7 @@ class Engine:
             doc=data.get("doc"),
             source_task=tid,
         )
+        self._log("task.conclude", task.get("target"), task=tid, finding=f["id"], kind=kind)
         return StepOutcome(tid, "concluded", f["id"])
 
     # -- the loop ---------------------------------------------------------- #

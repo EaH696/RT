@@ -102,6 +102,21 @@ it when you need distributed workers across many appliances or a live UI of
 in-flight executions. On a single self-hosted (possibly air-gapped) appliance it
 would only add a server dependency.
 
+## Audit log — the evidence trail
+
+`rt.audit` records every engagement action — `engagement.init`,
+`task.create`, **`task.confirm`** (the operator approving offensive action),
+`task.dispatch`, `task.blocked`, `task.conclude`, `finding.add` — as an
+append-only, hash-chained log. Each entry stores `prev_hash` and
+`entry_hash = sha256(prev_hash + canonical(entry))`, so any edit, deletion, or
+reorder breaks the chain; `rt audit verify` walks it and reports the first
+broken sequence number. No secret key is needed — a client or auditor verifies
+it independently. This is the VAPT liability shield.
+
+Persistence is pluggable (`AuditStore`): **SQLite** (stdlib) by default and for
+the embedded appliance; a **Postgres** backend (psycopg, same schema) for
+production, selected by a `postgres://` DSN via `--audit` or `open_audit()`.
+
 ## Transport between services
 
 The Python orchestrator and the two Go services (policy-gate, sandbox) are
@@ -130,8 +145,10 @@ only on the client method signatures, which mirror the proto service methods.
    abstraction are done and tested; what remains is launching each tool in an
    ephemeral gVisor/Firecracker container whose only route is the proxy
    (nftables/transparent redirect). Needs a host with the runtime installed.
-2. **Persistence + audit:** Postgres (findings, hash-chained audit log), Neo4j
-   (attack graph at scale).
+2. **Full graph persistence in Postgres/Neo4j.** The hash-chained audit log
+   already persists (SQLite default, Postgres backend); what remains is moving
+   the engagement graph (findings + tasks) off the filesystem into Postgres,
+   and Neo4j for attack-graph queries at scale.
 3. **Operator console** (`console/`): engagement view, live attack graph, and
    the approval queue backed by `gateway/`.
 4. **Commander auto-planning:** close the loop — the commander agent proposes

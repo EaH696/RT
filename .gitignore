@@ -1,5 +1,7 @@
-# engagement data — never commit client findings
+# engagement data — never commit client findings or audit logs
 .rt/
+*.sqlite
+*.sqlite-journal
 engagements/
 deploy/engagements/
 deploy/scope/
