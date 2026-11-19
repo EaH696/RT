@@ -98,6 +98,28 @@ it when you need distributed workers across many appliances or a live UI of
 in-flight executions. On a single self-hosted (possibly air-gapped) appliance it
 would only add a server dependency.
 
+## Transport between services
+
+The Python orchestrator and the two Go services (policy-gate, sandbox) are
+separate processes. `proto/rt.proto` is the contract (`PolicyGate.Check`,
+`ToolRunner.Run`). The wire transport is **HTTP+JSON over stdlib** so the core
+has no runtime dependency on an air-gapped appliance:
+
+```
+orchestrator ──HTTP /check──► policy-gate         (rt/transport.GateClient)
+orchestrator ──HTTP /run────► sandbox ──/check──► policy-gate   (sandbox rechecks)
+```
+
+The sandbox does NOT trust that the orchestrator checked scope — it re-checks
+every run against the policy-gate, and refuses gated (exploit+) tiers that are
+not operator-confirmed. Both refusals are enforced in Go, across the language
+boundary.
+
+Swapping to gRPC-on-the-wire is localized: generate stubs from the proto and
+reimplement `rt/transport.py` (Python) and the Go `ToolRunnerServer` /
+policy-gate handler. Nothing else changes — the Engine and scope code depend
+only on the client method signatures, which mirror the proto service methods.
+
 ## What to build next (in order)
 
 1. **Sandbox container runtime + egress proxy.** Make the physical scope

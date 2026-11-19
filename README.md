@@ -64,13 +64,22 @@ cross-language (Python↔Go) signature verification, the gated-exploit
 confirmation flow, the **durable engagement loop** (`rt run` — auto-dispatches
 ready tasks, pauses at the operator gate, resumes after `rt confirm`, and is
 crash-safe because all state is on disk), the `rt` CLI, the Go policy-gate
-service, the tool-adapter contract with scope/tier enforcement, and the report
-generator — all with passing tests.
+and sandbox **services** with the orchestrator wired to them over HTTP+JSON
+(contract: `proto/rt.proto`) — `Python client → policy-gate` and
+`Python → sandbox → policy-gate recheck`, with out-of-scope and unconfirmed-
+exploit requests refused across the language boundary — the tool-adapter
+contract, and the report generator — all with passing tests.
 
 **Stubbed (clear interfaces, wire next):** the sandbox's container runtime and
-egress proxy, the gRPC services, the operator console, and Postgres/Neo4j
-persistence + the hash-chained audit log. (Temporal is an optional scale-up for
-distributed workers — not required on a single appliance; see docs/ARCHITECTURE.md.)
+egress proxy, the operator console, and Postgres/Neo4j persistence + the
+hash-chained audit log.
+
+**Transport note:** inter-service calls use HTTP+JSON over stdlib so the core
+runs dependency-free on an air-gapped appliance. `proto/rt.proto` is the
+contract; swapping to gRPC-on-the-wire is a localized change (generate stubs,
+reimplement `rt/transport.py` + the Go `*Server` handlers). Temporal is an
+optional scale-up for distributed workers, not required on a single appliance.
+See docs/ARCHITECTURE.md.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and the
 sapper→RT mapping.

@@ -68,10 +68,17 @@ def default_agent(model: str = "local-default", timeout: int = 900) -> AgentFn:
 
 
 class Engine:
-    def __init__(self, store: Store, agent: AgentFn, *, worker: str = "executor"):
+    def __init__(self, store: Store, agent: AgentFn, *, worker: str = "executor",
+                 gate=None):
+        """`gate`, if given, is a transport.GateClient (or anything with
+        .check(target) -> Decision). When set, every task's target is validated
+        against the remote Go policy-gate before dispatch — defense in depth on
+        top of the local rt.scope check. A denial concludes the task as a note
+        and the loop moves on; it never silently runs out-of-scope work."""
         self.store = store
         self.agent = agent
         self.worker = worker
+        self.gate = gate
 
     # -- one unit of work -------------------------------------------------- #
     def step(self) -> StepOutcome | None:
@@ -83,8 +90,22 @@ class Engine:
             return None
         task = ready[0]
         tid = task["id"]
-        # claim_task re-checks the gate under the store lock — defense in depth
-        # against a task that became gated between frontier() and here.
+        # Remote policy-gate check before we touch anything. The authoritative
+        # scope enforcement lives in Go; the orchestrator asks it here so an
+        # out-of-scope task is stopped at dispatch, not just by the egress proxy.
+        target = task.get("target")
+        if self.gate is not None and target:
+            decision = self.gate.check(target)
+            if not decision.allowed:
+                f = self.store.add_finding(
+                    f"task {tid} blocked by policy-gate: {decision.reason}",
+                    creator=self.worker, kind="note", target=target,
+                    source_task=tid, title="out of scope",
+                )
+                return StepOutcome(tid, "blocked", f["id"], decision.reason)
+        # claim_task re-checks the confirmation gate under the store lock —
+        # defense in depth against a task that became gated between frontier()
+        # and here.
         self.store.claim_task(tid, worker=self.worker)
         template = TIER_TEMPLATE.get(task.get("risk_tier", "recon"), "recon")
 

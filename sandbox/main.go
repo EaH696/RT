@@ -1,11 +1,28 @@
 package main
 
-import "log"
+import (
+	"flag"
+	"log"
+	"net/http"
+	"os"
+)
 
-// Entry point is a scaffold placeholder. The sandbox will expose a gRPC service
-// (see /proto/rt.proto) that the orchestrator calls to run tools. For now this
-// keeps the module building and documents the wiring.
+// The sandbox service. Exposes ToolRunner.Run over HTTP+JSON (proto/rt.proto);
+// swap to gRPC by generating stubs from the proto and serving them instead.
+// Every run is scope-checked against the policy-gate and refuses gated tiers
+// that are not operator-confirmed (see Runner.Run).
 func main() {
-	log.Println("rt-sandbox scaffold — wire the gRPC ToolRunner service here (see proto/rt.proto)")
-	_ = Runner{Adapters: map[string]Adapter{}}
+	addr := flag.String("addr", ":8710", "listen address")
+	gateURL := flag.String("gate", os.Getenv("RT_POLICY_GATE_URL"), "policy-gate base URL")
+	flag.Parse()
+
+	runner := &Runner{Adapters: DefaultAdapters()}
+	if *gateURL != "" {
+		runner.Gate = newHTTPGate(*gateURL)
+		log.Printf("sandbox: scope checks via policy-gate at %s", *gateURL)
+	} else {
+		log.Printf("sandbox: WARNING no -gate/RT_POLICY_GATE_URL set — scope checks disabled (dev only)")
+	}
+	log.Printf("rt-sandbox listening on %s", *addr)
+	log.Fatal(http.ListenAndServe(*addr, ToolRunnerServer(runner)))
 }
