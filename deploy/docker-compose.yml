@@ -1,0 +1,38 @@
+# RT self-hosted appliance — local/dev composition.
+#
+# On a real appliance these ship as a signed bundle and the sandbox gets a
+# hardened runtime (gVisor/Firecracker) with egress pinned to the policy-gate.
+# This compose file is the development stand-in.
+services:
+  policy-gate:
+    build: ../policy-gate
+    command: ["-scope", "/scope/scope.json", "-addr", ":8700"]
+    volumes:
+      - ./scope:/scope:ro
+    ports:
+      - "8700:8700"
+
+  sandbox:
+    build: ../sandbox
+    depends_on: [policy-gate]
+    # In production: run with a container runtime that can launch nested,
+    # egress-controlled microVMs for each tool run.
+
+  gateway:
+    build: ../gateway
+    command: ["-addr", ":8080"]
+    depends_on: [policy-gate]
+    ports:
+      - "8080:8080"
+
+  orchestrator:
+    build: ../orchestrator
+    depends_on: [policy-gate, sandbox]
+    environment:
+      # Point at a locally served model so no target data leaves the appliance.
+      - RT_AGENT_BIN=${RT_AGENT_BIN:-claude}
+    volumes:
+      - ./engagements:/engagements
+# A real deployment also adds: postgres (findings + hash-chained audit log),
+# neo4j (attack graph), a durable workflow engine (Temporal) for pause/resume
+# across the exploit confirmation gate, and the operator console (console/).

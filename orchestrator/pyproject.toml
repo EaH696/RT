@@ -1,0 +1,23 @@
+[project]
+name = "rt-orchestrator"
+version = "0.1.0"
+description = "RT — HexaLab agentic penetration-testing orchestration core"
+requires-python = ">=3.11"
+dependencies = []  # stdlib-only core, by design (runs on an air-gapped appliance)
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+rt = "rt.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["rt*"]
+
+[tool.setuptools.package-data]
+rt = ["templates/*.md", "knowledge/entries/*.json"]

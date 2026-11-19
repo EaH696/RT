@@ -1,0 +1,10 @@
+Copyright (c) 2026 HexaLab Technologies. All rights reserved.
+
+RT is proprietary software of HexaLab Technologies.
+
+NOTE (choose RT's license before distribution): this placeholder treats RT as
+proprietary. RT incorporates MIT-licensed components derived from sapper-v2 —
+see NOTICE and LICENSE-THIRD-PARTY. Whatever license you ultimately choose for
+RT, those third-party portions remain under the MIT License and their NOTICE
+attribution MUST be retained. If you instead release RT itself under an open
+license, replace this file accordingly.

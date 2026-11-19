@@ -1,0 +1,26 @@
+# engagement data — never commit client findings
+.rt/
+engagements/
+deploy/engagements/
+deploy/scope/
+*.scope.json
+scope.json
+
+# python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# go
+bin/
+*.test
+
+# misc
+.DS_Store
+
+# compiled go binaries (named after their module dir)
+gateway/gateway
+policy-gate/policy-gate
+sandbox/sandbox

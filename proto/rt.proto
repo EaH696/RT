@@ -1,0 +1,68 @@
+// RT inter-service contract. The Python orchestrator talks to the Go sandbox
+// and policy-gate over gRPC using these messages. Generate stubs with protoc
+// for both languages; kept here as the single source of truth for the seam.
+syntax = "proto3";
+
+package rt.v1;
+
+option go_package = "github.com/hexalab/rt/proto/rtv1";
+
+// ---- policy-gate ---------------------------------------------------------- //
+service PolicyGate {
+  // Check validates one target against the signed engagement scope.
+  rpc Check(ScopeCheckRequest) returns (ScopeCheckResponse);
+}
+
+message ScopeCheckRequest {
+  string engagement_id = 1;
+  string target = 2; // IP, host, or URL host
+}
+
+message ScopeCheckResponse {
+  bool allowed = 1;
+  string reason = 2;
+}
+
+// ---- sandbox -------------------------------------------------------------- //
+service ToolRunner {
+  // Run executes one tool against a target inside an ephemeral, egress-pinned
+  // container. The sandbox re-checks scope and refuses gated tiers that are
+  // not confirmed.
+  rpc Run(ToolRequest) returns (ToolResult);
+}
+
+enum RiskTier {
+  RECON = 0;
+  ENUM = 1;
+  ANALYSIS = 2;
+  EXPLOIT = 3;
+  POST = 4;
+  DESTRUCTIVE = 5;
+}
+
+message ToolRequest {
+  string tool = 1;              // "nmap", "nuclei", ...
+  string target = 2;            // authorized asset (policy-gate checked)
+  map<string, string> args = 3; // normalized per-adapter
+  RiskTier tier = 4;
+  bool confirmed = 5;           // operator approval carried from the task
+  int32 timeout_seconds = 6;
+}
+
+message ToolResult {
+  int32 exit_code = 1;
+  string stdout = 2;
+  string stderr = 3;
+  string err = 4;
+}
+
+// ---- findings (for streaming results back into the graph) ----------------- //
+message Finding {
+  string id = 1;
+  string kind = 2;        // host|service|vuln|cred|loot|note
+  string title = 3;
+  string description = 4;
+  string target = 5;
+  map<string, string> data = 6;
+  string doc = 7;
+}

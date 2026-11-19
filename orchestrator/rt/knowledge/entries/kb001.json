@@ -1,0 +1,13 @@
+{
+  "id": "kb001",
+  "title": "Web application recon workflow",
+  "description": "Order of operations for web targets: fingerprint -> content -> leaks -> params",
+  "detail": "Work in order, record each step as a service/loot finding:\n1. Fingerprint: whatweb / response headers / favicon hash\n2. robots.txt / sitemap.xml / .well-known/\n3. Content discovery: feroxbuster or gobuster; focus on /admin /login /api /backup /upload\n4. Leaks: .git/ .svn/ .env .bak swagger actuator\n5. JS analysis: extract endpoints and hardcoded keys\n6. Params: hidden parameter discovery\nPrinciple: fingerprint pins the version -> search the matching CVE. Any leak goes straight to a loot finding.",
+  "commands": [
+    "whatweb -a 3 http://TARGET",
+    "feroxbuster -u http://TARGET -w /usr/share/wordlists/dirb/common.txt"
+  ],
+  "tags": ["web", "recon"],
+  "source": "methodology",
+  "created_at": "2026-11-19T00:00:00Z"
+}

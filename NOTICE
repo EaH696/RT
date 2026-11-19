@@ -1,0 +1,24 @@
+RT — HexaLab Technologies
+
+This product includes software derived from sapper-v2:
+    https://github.com/N1nEmAn/sapper-v2
+    Copyright (c) 2026 N1nEmAn (VarFusion)
+    Licensed under the MIT License.
+
+The following parts of RT are adapted from sapper-v2 and are governed, for
+those portions, by the MIT License reproduced in LICENSE-THIRD-PARTY:
+
+  * orchestrator/rt/store.py      (fact/intent graph -> finding/task graph)
+  * orchestrator/rt/runner.py     (agent CLI runner)
+  * orchestrator/rt/prompts.py    (template rendering)
+  * orchestrator/rt/knowledge.py  (offline knowledge base)
+  * orchestrator/rt/templates/*   (agent role prompts, adapted for RT)
+
+Per the MIT License, the above copyright notice and the MIT permission notice
+(LICENSE-THIRD-PARTY) must be retained in all copies or substantial portions
+of these files.
+
+RT's own additions — the signed-scope engagement model (rt.scope), the Go
+policy-gate, the tool-execution sandbox, the gateway/approval service, the
+findings/report module, and the inter-service contract — are (c) 2026 HexaLab
+Technologies; see LICENSE.
