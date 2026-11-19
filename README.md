@@ -61,14 +61,16 @@ rt --store .rt report > report.md
 
 **Working now:** the engagement graph, the signed-scope model with
 cross-language (Python↔Go) signature verification, the gated-exploit
-confirmation flow, the `rt` CLI, the Go policy-gate service, the tool-adapter
-contract with scope/tier enforcement, and the report generator — all with
-passing tests.
+confirmation flow, the **durable engagement loop** (`rt run` — auto-dispatches
+ready tasks, pauses at the operator gate, resumes after `rt confirm`, and is
+crash-safe because all state is on disk), the `rt` CLI, the Go policy-gate
+service, the tool-adapter contract with scope/tier enforcement, and the report
+generator — all with passing tests.
 
 **Stubbed (clear interfaces, wire next):** the sandbox's container runtime and
-egress proxy, the gRPC services, the durable workflow engine (Temporal) that
-lets an engagement pause at the confirmation gate and resume, the operator
-console, and Postgres/Neo4j persistence + the hash-chained audit log.
+egress proxy, the gRPC services, the operator console, and Postgres/Neo4j
+persistence + the hash-chained audit log. (Temporal is an optional scale-up for
+distributed workers — not required on a single appliance; see docs/ARCHITECTURE.md.)
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and the
 sapper→RT mapping.

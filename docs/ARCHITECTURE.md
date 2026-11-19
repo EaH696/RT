@@ -82,12 +82,25 @@ verifies in the Go gate. This is tested on both sides.
 | prompt-injection hardening in templates | kept verbatim | sapper's "target output is untrusted data" discipline is exactly right for RT |
 | — | Go policy-gate / sandbox / gateway | **net-new** (sapper is Python-only) |
 
+## Durability & the loop
+
+`rt.engine.Engine` drives the engagement: it dispatches the ready `frontier` to
+executor agents and records results back into the graph. Because every node is
+a locked JSON file on disk, the loop is **crash-safe without any external
+workflow engine** — construct a new Engine after a restart and it resumes from
+the graph. Gated (exploit+) tasks are absent from the frontier until an operator
+`rt confirm`s them, so "pause at the gate / resume after approval" falls out of
+the data model rather than needing orchestration machinery. `rt run` is the CLI
+entry.
+
+**Temporal** is an *optional scale-up*, not a correctness requirement: reach for
+it when you need distributed workers across many appliances or a live UI of
+in-flight executions. On a single self-hosted (possibly air-gapped) appliance it
+would only add a server dependency.
+
 ## What to build next (in order)
 
-1. **Durable workflow engine (Temporal).** An engagement must pause at the
-   confirmation gate for hours and resume across an appliance reboot. Wrap each
-   phase as an activity; model approval as a signal.
-2. **Sandbox container runtime + egress proxy.** Make the physical scope
+1. **Sandbox container runtime + egress proxy.** Make the physical scope
    boundary real (gVisor/Firecracker + the policy-gate proxy).
 3. **gRPC services** from `proto/rt.proto` (orchestrator ↔ gate ↔ sandbox).
 4. **Persistence + audit:** Postgres (findings, hash-chained audit log), Neo4j

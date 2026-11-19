@@ -148,6 +148,20 @@ def cmd_confirm(args) -> int:
     return 0
 
 
+def cmd_run(args) -> int:
+    s = _store(args); s.require()
+    from .engine import Engine, default_agent
+    eng = Engine(s, default_agent(model=args.model), worker=args.worker)
+    report = eng.run(max_steps=args.max_steps)
+    for o in report.steps:
+        print(f"  {o.task_id}: {o.status}" + (f" -> {o.finding_id}" if o.finding_id else ""))
+    print(f"ran {len(report.steps)} task(s), {report.concluded} concluded; "
+          f"stopped: {report.stopped_reason}")
+    if report.stopped_reason == "awaiting operator confirmation":
+        print("→ review and approve gated tasks with `rt queue` / `rt confirm`")
+    return 0
+
+
 def cmd_report(args) -> int:
     s = _store(args); s.require()
     print(findings_mod.render_markdown(s))
@@ -186,6 +200,12 @@ def build_parser() -> argparse.ArgumentParser:
     for name, fn in (("status", cmd_status), ("graph", cmd_graph),
                      ("frontier", cmd_frontier), ("queue", cmd_queue), ("report", cmd_report)):
         sp = sub.add_parser(name); sp.set_defaults(func=fn)
+
+    r = sub.add_parser("run", help="drive the durable engagement loop")
+    r.add_argument("--model", default="local-default")
+    r.add_argument("--worker", default="executor")
+    r.add_argument("--max-steps", type=int, default=100, dest="max_steps")
+    r.set_defaults(func=cmd_run)
 
     f = sub.add_parser("finding"); f.add_argument("description")
     f.add_argument("-k", "--kind", default="note"); f.add_argument("--target")
