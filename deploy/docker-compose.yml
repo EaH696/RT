@@ -15,8 +15,12 @@ services:
   sandbox:
     build: ../sandbox
     depends_on: [policy-gate]
-    # In production: run with a container runtime that can launch nested,
-    # egress-controlled microVMs for each tool run.
+    command: ["-addr", ":8710", "-egress-addr", ":8720", "-gate", "http://policy-gate:8700"]
+    environment:
+      # set to a gVisor/Firecracker launcher in production; unset => LocalRuntime (dev, no isolation)
+      - RT_CONTAINER_SHIM=${RT_CONTAINER_SHIM:-}
+    # In production the tool containers this launches must have the egress proxy
+    # (:8720) as their ONLY route (nftables/transparent redirect).
 
   gateway:
     build: ../gateway

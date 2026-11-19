@@ -68,11 +68,15 @@ and sandbox **services** with the orchestrator wired to them over HTTP+JSON
 (contract: `proto/rt.proto`) — `Python client → policy-gate` and
 `Python → sandbox → policy-gate recheck`, with out-of-scope and unconfirmed-
 exploit requests refused across the language boundary — the tool-adapter
-contract, and the report generator — all with passing tests.
+contract, the **egress proxy** (physically refuses out-of-scope connections at
+the network layer, delegating the decision to the policy-gate) with the
+runtime abstraction that pins a tool's only egress route to it, and the report
+generator — all with passing tests.
 
-**Stubbed (clear interfaces, wire next):** the sandbox's container runtime and
-egress proxy, the operator console, and Postgres/Neo4j persistence + the
-hash-chained audit log.
+**Stubbed (clear interfaces, wire next):** the production `ContainerRuntime`
+(gVisor/Firecracker — needs a host with the runtime; `LocalRuntime` works for
+dev), the operator console, and Postgres/Neo4j persistence + the hash-chained
+audit log.
 
 **Transport note:** inter-service calls use HTTP+JSON over stdlib so the core
 runs dependency-free on an air-gapped appliance. `proto/rt.proto` is the

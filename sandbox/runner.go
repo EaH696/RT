@@ -1,20 +1,13 @@
 // Package main is RT's tool-execution sandbox. Agents never run tools in their
 // own process; they ask the sandbox to run a named tool against a target. Each
-// run happens in an ephemeral, egress-controlled container (gVisor/Firecracker
-// recommended on the appliance) whose ONLY network route is through the
-// policy-gate's egress proxy — so a tool can physically reach only in-scope
-// hosts.
-//
-// SCAFFOLD STATUS: the container lifecycle is stubbed (it runs the tool
-// locally with a timeout and captures output). Wire Run() to your container
-// runtime before production. The Tool contract and the pre-flight scope check
-// are the parts worth getting right now.
+// run is validated (tier + scope) and then executed through a Runtime that
+// pins the tool's egress to the EgressProxy, so a tool can physically reach
+// only in-scope hosts.
 package main
 
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"time"
 )
 
@@ -37,11 +30,11 @@ func (t RiskTier) Gated() bool {
 
 // ToolRequest is one tool invocation an agent asked for.
 type ToolRequest struct {
-	Tool      string            `json:"tool"`       // e.g. "nmap", "nuclei"
-	Target    string            `json:"target"`     // the asset to act on
-	Args      map[string]string `json:"args"`       // normalized, per-adapter
+	Tool      string            `json:"tool"`
+	Target    string            `json:"target"`
+	Args      map[string]string `json:"args"`
 	Tier      RiskTier          `json:"tier"`
-	Confirmed bool              `json:"confirmed"`  // operator approval carried from the task
+	Confirmed bool              `json:"confirmed"`
 	Timeout   time.Duration     `json:"timeout"`
 }
 
@@ -53,24 +46,24 @@ type ToolResult struct {
 	Err      string `json:"err,omitempty"`
 }
 
-// ScopeChecker is satisfied by a client of the policy-gate. The sandbox calls
-// it before every run — belt to the egress proxy's braces.
+// ScopeChecker is satisfied by a client of the policy-gate.
 type ScopeChecker interface {
 	Permit(ctx context.Context, target string) (bool, string, error)
 }
 
-// Adapter normalizes one external tool into argv. Keeping this an interface is
-// what lets RT grow a library of tools without touching the runner.
+// Adapter normalizes one external tool into argv.
 type Adapter interface {
 	Name() string
-	// Argv builds the command line for a target + normalized args.
 	Argv(req ToolRequest) ([]string, error)
 }
 
-// Runner executes tool requests after enforcing tier and scope.
+// Runner executes tool requests after enforcing tier and scope, through a
+// Runtime that confines the tool and pins its egress to EgressProxy.
 type Runner struct {
-	Gate     ScopeChecker
-	Adapters map[string]Adapter
+	Gate        ScopeChecker
+	Adapters    map[string]Adapter
+	Runtime     Runtime // defaults to LocalRuntime when nil (dev)
+	EgressProxy string  // URL the tool's only egress route must use
 }
 
 func (r *Runner) Run(ctx context.Context, req ToolRequest) (ToolResult, error) {
@@ -94,19 +87,13 @@ func (r *Runner) Run(ctx context.Context, req ToolRequest) (ToolResult, error) {
 	if err != nil {
 		return ToolResult{}, err
 	}
-	// TODO(appliance): launch argv inside an ephemeral container whose egress
-	// is pinned to the policy-gate proxy. This local exec is a scaffold stand-in.
-	to := req.Timeout
-	if to == 0 {
-		to = 120 * time.Second
+	rt := r.Runtime
+	if rt == nil {
+		rt = LocalRuntime{}
 	}
-	cctx, cancel := context.WithTimeout(ctx, to)
-	defer cancel()
-	cmd := exec.CommandContext(cctx, argv[0], argv[1:]...)
-	out, _ := cmd.Output()
-	res := ToolResult{Stdout: string(out)}
-	if cmd.ProcessState != nil {
-		res.ExitCode = cmd.ProcessState.ExitCode()
-	}
-	return res, nil
+	return rt.Exec(ctx, ContainerSpec{
+		Argv:        argv,
+		EgressProxy: r.EgressProxy,
+		Timeout:     req.Timeout,
+	})
 }

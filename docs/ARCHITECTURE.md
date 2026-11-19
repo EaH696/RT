@@ -61,9 +61,13 @@ Enforcement is **two points, defense in depth**:
 
 1. **Logical** — the Python orchestrator checks every target before dispatch
    (fast, early rejection), and the Go policy-gate re-checks it authoritatively.
-2. **Physical** — the sandbox's only egress route is the policy-gate proxy,
-   which drops traffic to any non-scoped host. A confused or compromised agent
-   container *cannot* reach an excluded asset.
+2. **Physical** — the sandbox runs an **egress proxy** (`sandbox/egress.go`)
+   that is a tool's only network route; on every connection (HTTP and CONNECT)
+   it asks the policy-gate whether the destination is in scope and refuses
+   otherwise. It fails CLOSED: if the gate is unreachable, the connection is
+   denied. `ContainerRuntime` makes this proxy the container's *only* egress
+   (nftables/transparent redirect) so even raw-socket tools cannot escape it.
+   A confused or compromised agent *cannot* reach an excluded asset.
 
 The Python signer and the Go verifier produce byte-identical canonical forms
 (sorted keys, compact separators), so a scope signed by the operator in Python
@@ -122,12 +126,17 @@ only on the client method signatures, which mirror the proto service methods.
 
 ## What to build next (in order)
 
-1. **Sandbox container runtime + egress proxy.** Make the physical scope
-   boundary real (gVisor/Firecracker + the policy-gate proxy).
-3. **gRPC services** from `proto/rt.proto` (orchestrator ↔ gate ↔ sandbox).
-4. **Persistence + audit:** Postgres (findings, hash-chained audit log), Neo4j
+1. **Wire `ContainerRuntime` to a real host.** The egress proxy and the runtime
+   abstraction are done and tested; what remains is launching each tool in an
+   ephemeral gVisor/Firecracker container whose only route is the proxy
+   (nftables/transparent redirect). Needs a host with the runtime installed.
+2. **Persistence + audit:** Postgres (findings, hash-chained audit log), Neo4j
    (attack graph at scale).
-5. **Operator console** (`console/`): engagement view, live attack graph, and
+3. **Operator console** (`console/`): engagement view, live attack graph, and
    the approval queue backed by `gateway/`.
-6. **Tool adapter library:** grow `sandbox/adapters.go` (nmap/nuclei present) —
-   each adapter takes its target only from the authorized field.
+4. **Commander auto-planning:** close the loop — the commander agent proposes
+   tasks from new findings; executors run them; gated ones queue to the console.
+5. **Tool adapter library:** grow `sandbox/adapters.go` (nmap/nuclei present) —
+   each adapter takes its target only from the authorized field — plus result
+   parsers that emit typed findings.
+6. **Optional / scale:** gRPC transport swap; Neo4j; Temporal for multi-appliance.
