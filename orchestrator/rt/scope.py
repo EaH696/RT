@@ -18,16 +18,26 @@ unable to reach an excluded host even if this check is bypassed.
 
 The scope is signed at engagement creation (operator signs the ROE). The
 signature is what you show a client — and an insurer — to prove RT could not
-have touched an out-of-scope asset. Signing/verification here is a stub
-(sha256 digest); wire it to your real KMS/HSM before production.
+have touched an out-of-scope asset.
+
+Signatures are Ed25519 (RFC 8032). The operator holds a 32-byte private seed
+(`rt keygen`); the signature and the operator's public key are embedded in
+scope.json. Verification is asymmetric — the policy-gate and any auditor verify
+with the public key and can never forge a scope, and the gate additionally
+checks that the signing key is in its provisioned trust store. There is NO
+symmetric/checksum fallback: a scope without a valid Ed25519 signature does not
+verify, so an attacker cannot strip the algorithm field to downgrade it. The
+pure-Python signer (rt._ed25519) keeps the core dependency-free; swap the seed
+file for a KMS/HSM-backed signer in production by replacing `Scope.sign`.
 """
 from __future__ import annotations
 
-import hashlib
 import ipaddress
 import json
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
+
+from . import _ed25519
 
 
 class ScopeError(Exception):
@@ -45,7 +55,9 @@ class Scope:
     window_end: str | None = None
     max_rps: int = 50
     signed_by: str | None = None
-    signature: str | None = None  # digest over the canonical scope body
+    sig_alg: str | None = None       # "ed25519" once signed
+    public_key: str | None = None    # operator Ed25519 public key, hex (32 bytes)
+    signature: str | None = None     # Ed25519 signature over the canonical body, hex
 
     # -- canonical body (everything except the signature) ------------------ #
     def _body(self) -> dict:
@@ -59,16 +71,60 @@ class Scope:
         return json.dumps(self._body(), sort_keys=True, ensure_ascii=False,
                           separators=(",", ":"))
 
-    def sign(self, operator: str) -> "Scope":
-        """Stub signer. Replace with KMS/HSM. Operator attests the ROE."""
+    def sign(self, operator: str, seed: bytes | str) -> "Scope":
+        """Operator attests the ROE with an Ed25519 seed (dev/default path).
+
+        For production, hold the key in an HSM or behind a signing agent and use
+        `sign_with` with a non-seed Signer — the verify path is identical.
+        """
+        from .signing import SeedSigner
+        seed_b = seed if isinstance(seed, (bytes, bytearray)) else bytes.fromhex(seed.strip())
+        if len(seed_b) != 32:
+            raise ScopeError("signing seed must be 32 bytes (see `rt keygen`)")
+        return self.sign_with(operator, SeedSigner(seed_b))
+
+    def sign_with(self, operator: str, signer) -> "Scope":
+        """Attest the ROE using any Ed25519 `Signer` (rt.signing).
+
+        The signed body includes signed_by, sig_alg, and public_key, so none can
+        be swapped without breaking the signature. The private key stays inside
+        the signer (HSM/agent/token); this method only hands it the canonical
+        bytes to sign.
+        """
+        pub = signer.public_key()
+        if len(pub) != 32:
+            raise ScopeError("signer public key must be 32 bytes (Ed25519)")
         self.signed_by = operator
-        self.signature = hashlib.sha256(self.canonical().encode()).hexdigest()
+        self.sig_alg = "ed25519"
+        self.public_key = pub.hex()
+        sig = signer.sign(self.canonical().encode())
+        if len(sig) != 64:
+            raise ScopeError("signer produced a non-Ed25519 signature")
+        self.signature = sig.hex()
+        if not self.verify():
+            raise ScopeError("produced signature does not verify — signer/key mismatch")
         return self
 
-    def verify(self) -> bool:
-        if not self.signature:
+    def verify(self, trusted: set[str] | None = None) -> bool:
+        """True iff the Ed25519 signature is valid for the embedded public key.
+
+        If `trusted` is given (a set of accepted public-key hex strings), the
+        signing key must also be a member — this is the trust anchor the gate
+        enforces. With no `trusted` set, only cryptographic authenticity is
+        checked (fine on the operator's own box signing their own scope).
+        """
+        if self.sig_alg != "ed25519" or not self.signature or not self.public_key:
             return False
-        return self.signature == hashlib.sha256(self.canonical().encode()).hexdigest()
+        if trusted is not None and self.public_key not in trusted:
+            return False
+        try:
+            return _ed25519.verify(
+                bytes.fromhex(self.public_key),
+                self.canonical().encode(),
+                bytes.fromhex(self.signature),
+            )
+        except ValueError:
+            return False
 
     # -- the check --------------------------------------------------------- #
     def permits(self, target: str) -> bool:

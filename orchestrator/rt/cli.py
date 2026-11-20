@@ -25,7 +25,9 @@ from .store import RTError, Store, frontier, awaiting_confirmation, is_open
 
 
 def _store(args) -> Store:
-    return Store(Path(args.store))
+    from .audit import open_audit
+    dsn = getattr(args, "audit", None) or str(Path(args.store) / "audit.db")
+    return Store(Path(args.store), audit=open_audit(dsn))
 
 
 def _kv(pairs: list[str] | None) -> dict:
@@ -51,6 +53,24 @@ def cmd_init(args) -> int:
     return 0
 
 
+def cmd_keygen(args) -> int:
+    import os
+    from . import _ed25519
+    seed = _ed25519.generate_seed()
+    pub = _ed25519.public_key(seed)
+    key_path = Path(f"{args.out}.key")
+    pub_path = Path(f"{args.out}.pub")
+    if key_path.exists() and not args.force:
+        raise RTError(f"{key_path} exists — refusing to overwrite (use --force)")
+    key_path.write_text(seed.hex() + "\n", encoding="utf-8")
+    os.chmod(key_path, 0o600)
+    pub_path.write_text(pub.hex() + "\n", encoding="utf-8")
+    print(f"wrote private seed  {key_path} (mode 0600 — keep it secret)")
+    print(f"wrote public key    {pub_path}")
+    print(f"public key: {pub.hex()}")
+    return 0
+
+
 def cmd_scope(args) -> int:
     path = Path(args.file)
     if args.scope_cmd == "new":
@@ -64,10 +84,24 @@ def cmd_scope(args) -> int:
         scope.save(path)
         print(f"wrote unsigned scope to {path} — review it, then `rt scope sign`")
     elif args.scope_cmd == "sign":
+        if bool(args.key) == bool(args.signer):
+            raise RTError("give exactly one of --key (seed file) or --signer (HSM/agent URI)")
         scope = Scope.load(path)
-        scope.sign(args.operator)
+        if args.signer:
+            from .signing import make_signer, SignerError
+            try:
+                scope.sign_with(args.operator, make_signer(args.signer))
+            except SignerError as e:
+                raise RTError(str(e))
+        else:
+            key_path = Path(args.key)
+            if not key_path.exists():
+                raise RTError(f"signing key {key_path} not found — generate one with `rt keygen`")
+            scope.sign(args.operator, key_path.read_text(encoding="utf-8").strip())
         scope.save(path)
-        print(f"scope signed by {args.operator}: {scope.signature[:16]}…")
+        print(f"scope signed by {args.operator} (ed25519)")
+        print(f"  public key: {scope.public_key}")
+        print(f"  provision this key in the policy-gate trust store (`-trust`) before use")
     elif args.scope_cmd == "check":
         scope = Scope.load(path)
         ok = scope.permits(args.target)
@@ -148,9 +182,59 @@ def cmd_confirm(args) -> int:
     return 0
 
 
+def cmd_run(args) -> int:
+    s = _store(args); s.require()
+    from .engine import Engine
+    p = s.load_project()
+    scope = Scope.load(p["scope_ref"])
+    if not scope.verify():
+        raise RTError("engagement scope signature invalid — re-sign before running")
+    engine = Engine(s, scope, model=args.model, timeout=args.timeout)
+    history = engine.run(max_rounds=args.max_rounds)
+    created = sum(len(r.created) for r in history)
+    dispatched = sum(len(r.dispatched) for r in history)
+    failed = sum(len(r.failed) for r in history)
+    print(f"ran {len(history)} round(s): {created} task(s) created, "
+          f"{dispatched} dispatched, {failed} failed")
+    if engine.last_errors:
+        print("executor failures (tasks left open for the next run):")
+        for err in engine.last_errors[:10]:
+            print(f"  - {err}")
+    pending = awaiting_confirmation(s)
+    if pending:
+        print(f"\n⚠  {len(pending)} task(s) awaiting operator confirmation — "
+              f"`rt queue` to review, `rt confirm <id>` to approve, then `rt run` again")
+    return 0
+
+
 def cmd_report(args) -> int:
     s = _store(args); s.require()
     print(findings_mod.render_markdown(s))
+    return 0
+
+
+def cmd_serve(args) -> int:
+    s = _store(args); s.require()
+    from .serve import serve
+    serve(s, host=args.host, port=args.port)
+    return 0
+
+
+def cmd_audit(args) -> int:
+    from .audit import open_audit
+    dsn = getattr(args, "audit", None) or str(Path(args.store) / "audit.db")
+    audit = open_audit(dsn)
+    if args.audit_cmd == "verify":
+        ok, broken, reason = audit.verify()
+        if ok:
+            print(f"audit chain OK ({len(audit.entries())} entries)")
+            return 0
+        print(f"AUDIT CHAIN BROKEN at seq {broken}: {reason}", file=sys.stderr)
+        return 2
+    # log
+    for e in audit.entries():
+        print(f"{e['seq']:>4}  {e['ts']}  {e['actor']:<12}  {e['event']:<16}  "
+              f"{e['data']}")
     return 0
 
 
@@ -167,7 +251,15 @@ def cmd_kb(args) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="rt", description="RT agentic pentest orchestrator")
     p.add_argument("--store", default=".rt", help="engagement graph directory")
+    p.add_argument("--audit", default=None,
+                   help="audit log DSN: a sqlite path (default <store>/audit.db) "
+                        "or a postgres:// URL")
     sub = p.add_subparsers(dest="cmd", required=True)
+
+    kg = sub.add_parser("keygen", help="generate an operator Ed25519 signing key")
+    kg.add_argument("--out", default="operator", help="output prefix (<out>.key, <out>.pub)")
+    kg.add_argument("--force", action="store_true")
+    kg.set_defaults(func=cmd_keygen)
 
     i = sub.add_parser("init"); i.add_argument("--engagement", required=True)
     i.add_argument("--objective", required=True); i.add_argument("--scope", required=True)
@@ -178,6 +270,9 @@ def build_parser() -> argparse.ArgumentParser:
     scn.add_argument("--allow", action="append"); scn.add_argument("--exclude", action="append")
     scn.add_argument("--file", default="scope.json")
     scsign = scs.add_parser("sign"); scsign.add_argument("--operator", required=True)
+    scsign.add_argument("--key", help="operator Ed25519 seed file (`rt keygen`); dev path")
+    scsign.add_argument("--signer", help="signer URI: seed:<file>, cmd:<path>, or "
+                        "pkcs11:module=...;key=...;token=...;pin=... (HSM/agent, production)")
     scsign.add_argument("--file", default="scope.json")
     scchk = scs.add_parser("check"); scchk.add_argument("target")
     scchk.add_argument("--file", default="scope.json")
@@ -202,8 +297,25 @@ def build_parser() -> argparse.ArgumentParser:
     c = sub.add_parser("confirm"); c.add_argument("task_id")
     c.add_argument("--operator", required=True); c.set_defaults(func=cmd_confirm)
 
+    r = sub.add_parser("run", help="drive the commander/executor loop")
+    r.add_argument("--model", required=True, help="agent model (passed to RT_AGENT_BIN)")
+    r.add_argument("--max-rounds", dest="max_rounds", type=int, default=20)
+    r.add_argument("--timeout", type=int, default=900, help="per-agent timeout (s)")
+    r.set_defaults(func=cmd_run)
+
     k = sub.add_parser("kb"); k.add_argument("query"); k.add_argument("-t", "--tag")
     k.set_defaults(func=cmd_kb)
+
+    sv = sub.add_parser("serve", help="run the operator console API (single appliance)")
+    sv.add_argument("--host", default="127.0.0.1")
+    sv.add_argument("--port", type=int, default=8070)
+    sv.set_defaults(func=cmd_serve)
+
+    a = sub.add_parser("audit", help="the hash-chained evidence trail")
+    asub = a.add_subparsers(dest="audit_cmd", required=True)
+    asub.add_parser("verify", help="walk the chain; report the first break")
+    asub.add_parser("log", help="print the audit log")
+    a.set_defaults(func=cmd_audit)
     return p
 
 

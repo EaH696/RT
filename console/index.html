@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RT Operator Console</title>
+<style>
+  /* Self-contained: no external fonts, scripts, or styles — runs air-gapped. */
+  :root{
+    --bg:#0e1116; --panel:#161b22; --panel2:#1c2230; --line:#2a3240;
+    --fg:#e6edf3; --muted:#8b97a7; --accent:#4c8dff; --accent2:#2f6fe0;
+    --ok:#2ea043; --warn:#d29922; --bad:#f85149;
+    --crit:#f85149; --high:#db6d28; --med:#d29922; --low:#3fb950; --info:#58a6ff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  header{display:flex;align-items:center;gap:12px;padding:12px 18px;
+    background:var(--panel);border-bottom:1px solid var(--line)}
+  header h1{font-size:15px;margin:0;font-weight:600;letter-spacing:.3px}
+  header .tag{color:var(--muted);font-size:12px}
+  .spacer{flex:1}
+  input,select,button{font:inherit;color:var(--fg)}
+  input,select{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:6px 9px}
+  button{background:var(--accent2);border:1px solid var(--accent);border-radius:6px;
+    padding:6px 12px;cursor:pointer}
+  button:hover{background:var(--accent)}
+  button.ghost{background:transparent;border-color:var(--line);color:var(--muted)}
+  button.ghost:hover{color:var(--fg);border-color:var(--muted)}
+  button.approve{background:var(--ok);border-color:var(--ok)}
+  main{padding:18px;max-width:1100px;margin:0 auto}
+  .row{display:flex;gap:14px;flex-wrap:wrap}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px}
+  .card h2{font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:0 0 10px}
+  .tiles{display:flex;gap:12px;flex-wrap:wrap}
+  .tile{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:12px 16px;min-width:120px}
+  .tile .n{font-size:24px;font-weight:650}
+  .tile .l{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+  table{width:100%;border-collapse:collapse}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+  td.mono,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
+  .pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600;border:1px solid}
+  .tier-exploit,.tier-post,.tier-destructive{color:var(--crit);border-color:var(--crit)}
+  .tier-recon,.tier-enum{color:var(--info);border-color:var(--info)}
+  .tier-analysis{color:var(--med);border-color:var(--med)}
+  .badge{display:inline-flex;align-items:center;gap:6px;font-weight:600}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+  .dot.ok{background:var(--ok)} .dot.bad{background:var(--bad)} .dot.unk{background:var(--muted)}
+  .muted{color:var(--muted)}
+  .err{color:var(--bad);margin:8px 0}
+  .empty{color:var(--muted);padding:10px 2px}
+  .hidden{display:none}
+  .k-host{color:var(--info)} .k-service{color:var(--low)} .k-vuln{color:var(--crit)}
+  .k-cred{color:var(--high)} .k-loot{color:var(--med)} .k-note{color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <h1>RT</h1><span class="tag">Operator Console</span>
+  <span id="who" class="tag"></span>
+  <div class="spacer"></div>
+  <select id="engSelect" class="hidden"></select>
+  <button id="refreshBtn" class="ghost hidden">Refresh</button>
+  <button id="logoutBtn" class="ghost hidden">Sign out</button>
+</header>
+<main>
+  <!-- connect -->
+  <section id="connect" class="card">
+    <h2>Connect</h2>
+    <div class="row" style="align-items:center">
+      <input id="token" type="password" placeholder="operator API token" style="min-width:320px">
+      <button id="connectBtn">Connect</button>
+    </div>
+    <div id="connectErr" class="err"></div>
+    <p class="muted" style="margin:8px 0 0">
+      The token identifies you to the gateway; approvals are recorded under your
+      identity in the audit log. The console is served same-origin — API calls go
+      to this host.
+    </p>
+  </section>
+
+  <!-- engagement -->
+  <section id="dash" class="hidden">
+    <div class="card">
+      <h2>Engagement</h2>
+      <div id="engMeta"></div>
+      <div class="tiles" id="tiles" style="margin-top:12px"></div>
+      <div id="auditBadge" style="margin-top:12px"></div>
+    </div>
+
+    <div class="card">
+      <h2>Approval queue — gated tasks awaiting confirmation</h2>
+      <div id="approvals"></div>
+    </div>
+
+    <div class="row">
+      <div class="card" style="flex:1;min-width:320px">
+        <h2>Findings</h2>
+        <div id="findings"></div>
+      </div>
+      <div class="card" style="flex:1;min-width:320px">
+        <h2>Tasks</h2>
+        <div id="tasks"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const esc = s => String(s==null?"":s).replace(/[&<>"']/g,c=>(
+  {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let TOKEN = sessionStorage.getItem("rt_token") || "";
+let ENG = null;
+
+function authHeaders(){ return {"Authorization":"Bearer "+TOKEN}; }
+
+async function api(path, opts){
+  const r = await fetch(path, Object.assign({headers:authHeaders()}, opts||{}));
+  if(r.status===401){ signOut("session expired or invalid token"); throw new Error("unauthorized"); }
+  if(!r.ok){ let m; try{m=(await r.json()).error}catch(e){m=r.statusText} throw new Error(m||("HTTP "+r.status)); }
+  return r.status===204 ? null : r.json();
+}
+
+function signOut(msg){
+  TOKEN=""; ENG=null; sessionStorage.removeItem("rt_token");
+  $("#dash").classList.add("hidden");
+  $("#connect").classList.remove("hidden");
+  ["engSelect","refreshBtn","logoutBtn"].forEach(id=>$("#"+id).classList.add("hidden"));
+  $("#who").textContent="";
+  if(msg) $("#connectErr").textContent=msg;
+}
+
+async function connect(){
+  TOKEN = $("#token").value.trim();
+  $("#connectErr").textContent="";
+  if(!TOKEN){ $("#connectErr").textContent="enter a token"; return; }
+  try{
+    const me = await api("/api/engagements");
+    sessionStorage.setItem("rt_token", TOKEN);
+    $("#who").textContent = me.operator;
+    const sel = $("#engSelect");
+    sel.innerHTML = (me.engagements||[]).map(id=>`<option>${esc(id)}</option>`).join("");
+    if(!me.engagements || !me.engagements.length){
+      $("#connectErr").textContent="no engagements visible for this token"; return;
+    }
+    ["engSelect","refreshBtn","logoutBtn"].forEach(id=>$("#"+id).classList.remove("hidden"));
+    $("#connect").classList.add("hidden");
+    $("#dash").classList.remove("hidden");
+    ENG = me.engagements[0];
+    await load();
+  }catch(e){ $("#connectErr").textContent = e.message; }
+}
+
+function tile(n,l){ return `<div class="tile"><div class="n">${esc(n)}</div><div class="l">${esc(l)}</div></div>`; }
+function tierPill(t){ return `<span class="pill tier-${esc(t)}">${esc(t)}</span>`; }
+
+async function load(){
+  ENG = $("#engSelect").value || ENG;
+  const base = "/engagements/"+encodeURIComponent(ENG);
+  try{
+    const [eng, graph, queue, audit] = await Promise.all([
+      api(base+"/api/engagement"),
+      api(base+"/api/graph"),
+      api(base+"/api/approvals"),
+      api(base+"/api/audit/verify").catch(()=>({ok:null})),
+    ]);
+    renderEngagement(eng); renderAudit(audit);
+    renderApprovals(queue, base); renderGraph(graph);
+  }catch(e){ $("#engMeta").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+}
+
+function renderEngagement(e){
+  $("#engMeta").innerHTML =
+    `<div class="mono">${esc(e.engagement_id)}</div>`+
+    `<div class="muted">${esc(e.objective||"")}</div>`+
+    `<div class="muted" style="margin-top:4px">scope: <span class="mono">${esc(e.scope_ref||"")}</span> · status: ${esc(e.status||"")}</div>`;
+  $("#tiles").innerHTML =
+    tile(e.findings,"findings")+tile(e.tasks,"tasks")+
+    tile(e.awaiting_confirmation,"awaiting approval");
+}
+
+function renderAudit(a){
+  let dot="unk", txt="audit: not configured";
+  if(a && a.ok===true){ dot="ok"; txt=`audit chain verified · ${a.entries} entries`; }
+  else if(a && a.ok===false){ dot="bad"; txt=`AUDIT CHAIN BROKEN at seq ${a.first_broken_seq}: ${a.reason}`; }
+  $("#auditBadge").innerHTML = `<span class="badge"><span class="dot ${dot}"></span>${esc(txt)}</span>`;
+}
+
+function renderApprovals(q, base){
+  if(!q || !q.length){ $("#approvals").innerHTML = `<div class="empty">Queue empty — no gated tasks awaiting confirmation.</div>`; return; }
+  const rows = q.map(t=>`<tr>
+     <td class="mono">${esc(t.id)}</td>
+     <td>${tierPill(t.risk_tier)}</td>
+     <td class="mono">${esc(t.target||"-")}</td>
+     <td>${esc(t.description||"")}</td>
+     <td><button class="approve" data-id="${esc(t.id)}">Approve</button></td>
+   </tr>`).join("");
+  $("#approvals").innerHTML =
+    `<table><thead><tr><th>task</th><th>tier</th><th>target</th><th>description</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  $("#approvals").querySelectorAll("button.approve").forEach(b=>{
+    b.onclick = ()=>approve(b.dataset.id, base);
+  });
+}
+
+async function approve(taskId, base){
+  if(!confirm(`Approve gated task ${taskId}?\nThis authorizes offensive action and is recorded in the audit log under your identity.`)) return;
+  try{
+    // operator is injected by the gateway from the authenticated token — not sent here.
+    await api(base+"/api/approve", {
+      method:"POST", headers:Object.assign({"Content-Type":"application/json"},authHeaders()),
+      body:JSON.stringify({task_id:taskId})
+    });
+    await load();
+  }catch(e){ alert("approve failed: "+e.message); }
+}
+
+function renderGraph(g){
+  const F=g.findings||[], T=g.tasks||[];
+  $("#findings").innerHTML = !F.length ? `<div class="empty">No findings yet.</div>` :
+    `<table><thead><tr><th>id</th><th>kind</th><th>target</th><th>detail</th></tr></thead><tbody>`+
+    F.map(f=>`<tr><td class="mono">${esc(f.id)}</td>
+      <td class="k-${esc(f.kind)}">${esc(f.kind)}</td>
+      <td class="mono">${esc(f.target||"-")}</td>
+      <td>${esc(f.title||f.description||"")}</td></tr>`).join("")+`</tbody></table>`;
+  $("#tasks").innerHTML = !T.length ? `<div class="empty">No tasks yet.</div>` :
+    `<table><thead><tr><th>id</th><th>tier</th><th>target</th><th>status</th><th>detail</th></tr></thead><tbody>`+
+    T.map(t=>{
+      const concluded = t.to!=null;
+      const st = concluded ? `done → ${esc(t.to)}` :
+        (t.requires_confirmation && !t.confirmed_at ? `<span class="pill tier-exploit">needs approval</span>` : esc(t.status));
+      return `<tr><td class="mono">${esc(t.id)}</td><td>${tierPill(t.risk_tier)}</td>
+        <td class="mono">${esc(t.target||"-")}</td><td>${st}</td>
+        <td>${esc(t.title||t.description||"")}</td></tr>`;
+    }).join("")+`</tbody></table>`;
+}
+
+$("#connectBtn").onclick = connect;
+$("#token").addEventListener("keydown", e=>{ if(e.key==="Enter") connect(); });
+$("#engSelect").onchange = load;
+$("#refreshBtn").onclick = load;
+$("#logoutBtn").onclick = ()=>signOut("");
+
+// auto-reconnect if a token is already in this session
+if(TOKEN){ $("#token").value = TOKEN; connect(); }
+// gentle poll of the approval queue so operators see new gated tasks
+setInterval(()=>{ if(ENG && !$("#dash").classList.contains("hidden")) load(); }, 15000);
+</script>
+</body>
+</html>

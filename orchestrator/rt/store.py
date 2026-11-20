@@ -77,12 +77,26 @@ def _read_json(path: Path) -> dict:
 class Store:
     """Filesystem-backed engagement graph. One file per node, fcntl-locked."""
 
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, audit=None):
         self.root = Path(root)
         self.findings_dir = self.root / "findings"
         self.tasks_dir = self.root / "tasks"
         self.project_file = self.root / "engagement.json"
         self.lock_file = self.root / LOCK_NAME
+        # Optional rt.audit.AuditStore. When set, every graph mutation is
+        # appended to the hash-chained evidence trail. None = no logging
+        # (unit tests, ephemeral use).
+        self.audit = audit
+
+    def _emit(self, event: str, *, actor: str, data: dict) -> None:
+        if self.audit is None:
+            return
+        try:
+            self.audit.append(event, actor=actor, data=data)
+        except Exception:
+            # The audit log must never crash the engagement loop. A broken sink
+            # is surfaced by `rt audit verify`, not by a failed finding write.
+            pass
 
     # -- existence ---------------------------------------------------------- #
     def exists(self) -> bool:
@@ -139,6 +153,8 @@ class Store:
                 "source_task": None,
             }
             _atomic_write_json(self.findings_dir / f"{OBJECTIVE_ID}.json", objective_finding)
+        self._emit("engagement.init", actor="operator",
+                   data={"engagement_id": engagement_id.strip(), "objective": objective})
 
     # -- project ------------------------------------------------------------ #
     def load_project(self) -> dict:
@@ -217,7 +233,12 @@ class Store:
                 source["concluded_at"] = now_iso()
                 source["worker"] = creator or source.get("worker")
                 self.save_task(source)
-            return finding
+        self._emit("finding.add", actor=creator or "unknown",
+                   data={"id": fid, "kind": kind, "target": target})
+        if source_task is not None:
+            self._emit("task.conclude", actor=creator or "unknown",
+                       data={"task": source_task, "to": fid})
+        return finding
 
     # -- tasks -------------------------------------------------------------- #
     def list_tasks(self) -> list[dict]:
@@ -282,7 +303,10 @@ class Store:
                 "concluded_at": None,
             }
             _atomic_write_json(self.tasks_dir / f"{tid}.json", task)
-            return task
+        self._emit("task.create", actor=creator or "commander",
+                   data={"id": tid, "tier": risk_tier, "target": target,
+                         "requires_confirmation": requires_confirmation})
+        return task
 
     def save_task(self, task: dict) -> None:
         _atomic_write_json(self.tasks_dir / f"{task['id']}.json", task)
@@ -293,6 +317,9 @@ class Store:
             if task["to"] is not None:
                 raise RTError(f"task {tid} already concluded")
             if task.get("requires_confirmation") and not task.get("confirmed_at"):
+                self._emit("task.blocked", actor=worker,
+                           data={"id": tid, "tier": task["risk_tier"],
+                                 "reason": "unconfirmed gated task"})
                 raise RTError(
                     f"task {tid} is {task['risk_tier']}-tier and needs operator "
                     f"confirmation before it can be claimed (`rt confirm {tid}`)"
@@ -303,7 +330,9 @@ class Store:
             task["worker"] = worker
             task["status"] = "claimed"
             self.save_task(task)
-            return task
+        self._emit("task.dispatch", actor=worker,
+                   data={"id": tid, "tier": task.get("risk_tier"), "target": task.get("target")})
+        return task
 
     def confirm_task(self, tid: str, operator: str) -> dict:
         """Operator approval for a gated (exploit+) task. The HITL checkpoint."""
@@ -320,7 +349,9 @@ class Store:
             task["confirmed_at"] = now_iso()
             task["confirmed_by"] = operator.strip()
             self.save_task(task)
-            return task
+        self._emit("task.confirm", actor=operator.strip(),
+                   data={"id": tid, "tier": task.get("risk_tier"), "target": task.get("target")})
+        return task
 
 
 # --------------------------------------------------------------------------- #

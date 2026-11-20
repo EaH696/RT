@@ -7,6 +7,9 @@ dependencies = []  # stdlib-only core, by design (runs on an air-gapped applianc
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+# Optional: PKCS#11 HSM signer backend (rt.signing.PKCS11Signer). The core and
+# the seed/external signers stay stdlib-only; only this backend needs the wheel.
+hsm = ["python-pkcs11>=0.7"]
 
 [project.scripts]
 rt = "rt.cli:main"

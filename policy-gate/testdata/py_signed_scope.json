@@ -1,0 +1,20 @@
+{
+  "engagement_id": "FIXTURE",
+  "allowed_cidrs": [
+    "10.0.0.0/24"
+  ],
+  "allowed_domains": [
+    "app.acme.test"
+  ],
+  "excluded_cidrs": [
+    "10.0.0.9/32"
+  ],
+  "excluded_domains": [],
+  "window_start": null,
+  "window_end": null,
+  "max_rps": 50,
+  "signed_by": "fixture-operator",
+  "sig_alg": "ed25519",
+  "public_key": "3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29",
+  "signature": "251f88cc3abbf391f456ecec8fa53b543db8591b7da2ba8f336e32aee557f8d5772e533bcef22886224af4e5f281ef52888c8edd08651f33806019d6daedb20c"
+}
