@@ -72,19 +72,37 @@ class Scope:
                           separators=(",", ":"))
 
     def sign(self, operator: str, seed: bytes | str) -> "Scope":
-        """Operator attests the ROE with their Ed25519 seed.
+        """Operator attests the ROE with an Ed25519 seed (dev/default path).
 
-        The signed body includes signed_by, sig_alg, and public_key, so none of
-        them can be swapped without breaking the signature. Replace this method
-        with a KMS/HSM-backed signer in production — the verify path is unchanged.
+        For production, hold the key in an HSM or behind a signing agent and use
+        `sign_with` with a non-seed Signer — the verify path is identical.
         """
+        from .signing import SeedSigner
         seed_b = seed if isinstance(seed, (bytes, bytearray)) else bytes.fromhex(seed.strip())
         if len(seed_b) != 32:
             raise ScopeError("signing seed must be 32 bytes (see `rt keygen`)")
+        return self.sign_with(operator, SeedSigner(seed_b))
+
+    def sign_with(self, operator: str, signer) -> "Scope":
+        """Attest the ROE using any Ed25519 `Signer` (rt.signing).
+
+        The signed body includes signed_by, sig_alg, and public_key, so none can
+        be swapped without breaking the signature. The private key stays inside
+        the signer (HSM/agent/token); this method only hands it the canonical
+        bytes to sign.
+        """
+        pub = signer.public_key()
+        if len(pub) != 32:
+            raise ScopeError("signer public key must be 32 bytes (Ed25519)")
         self.signed_by = operator
         self.sig_alg = "ed25519"
-        self.public_key = _ed25519.public_key(seed_b).hex()
-        self.signature = _ed25519.sign(seed_b, self.canonical().encode()).hex()
+        self.public_key = pub.hex()
+        sig = signer.sign(self.canonical().encode())
+        if len(sig) != 64:
+            raise ScopeError("signer produced a non-Ed25519 signature")
+        self.signature = sig.hex()
+        if not self.verify():
+            raise ScopeError("produced signature does not verify — signer/key mismatch")
         return self
 
     def verify(self, trusted: set[str] | None = None) -> bool:

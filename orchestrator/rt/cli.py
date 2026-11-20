@@ -84,12 +84,20 @@ def cmd_scope(args) -> int:
         scope.save(path)
         print(f"wrote unsigned scope to {path} — review it, then `rt scope sign`")
     elif args.scope_cmd == "sign":
-        key_path = Path(args.key)
-        if not key_path.exists():
-            raise RTError(f"signing key {key_path} not found — generate one with `rt keygen`")
-        seed = key_path.read_text(encoding="utf-8").strip()
+        if bool(args.key) == bool(args.signer):
+            raise RTError("give exactly one of --key (seed file) or --signer (HSM/agent URI)")
         scope = Scope.load(path)
-        scope.sign(args.operator, seed)
+        if args.signer:
+            from .signing import make_signer, SignerError
+            try:
+                scope.sign_with(args.operator, make_signer(args.signer))
+            except SignerError as e:
+                raise RTError(str(e))
+        else:
+            key_path = Path(args.key)
+            if not key_path.exists():
+                raise RTError(f"signing key {key_path} not found — generate one with `rt keygen`")
+            scope.sign(args.operator, key_path.read_text(encoding="utf-8").strip())
         scope.save(path)
         print(f"scope signed by {args.operator} (ed25519)")
         print(f"  public key: {scope.public_key}")
@@ -257,7 +265,9 @@ def build_parser() -> argparse.ArgumentParser:
     scn.add_argument("--allow", action="append"); scn.add_argument("--exclude", action="append")
     scn.add_argument("--file", default="scope.json")
     scsign = scs.add_parser("sign"); scsign.add_argument("--operator", required=True)
-    scsign.add_argument("--key", required=True, help="operator Ed25519 seed file (`rt keygen`)")
+    scsign.add_argument("--key", help="operator Ed25519 seed file (`rt keygen`); dev path")
+    scsign.add_argument("--signer", help="signer URI: seed:<file>, cmd:<path>, or "
+                        "pkcs11:module=...;key=...;token=...;pin=... (HSM/agent, production)")
     scsign.add_argument("--file", default="scope.json")
     scchk = scs.add_parser("check"); scchk.add_argument("target")
     scchk.add_argument("--file", default="scope.json")
