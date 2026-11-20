@@ -1,12 +1,12 @@
 # RT — Security model
 
-RT is a self-hosted, semi-autonomous, **operator-gated** agentic penetration-
-testing platform. Its design premise is that an autonomous offensive agent is
+RT is a self-hosted, semi-autonomous, **operator-gated** agentic
+penetration-testing platform. Its design premise is that an autonomous offensive agent is
 only safe to field if the safety controls are enforced by compiled, auditable
 components — not by asking a language model to behave. This document is the
 security model for a technical reviewer: the threat model, each control and how
-it is enforced in code, and an honest statement of what is live versus designed-
-and-pending.
+it is enforced in code, and an honest statement of what is live versus
+designed-and-pending.
 
 ## Threat model
 
