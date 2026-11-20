@@ -34,6 +34,10 @@ func NewEgressProxy(gate ScopeChecker, engagement string) *EgressProxy {
 	return &EgressProxy{Gate: gate, Engag: engagement, Dialer: &net.Dialer{Timeout: 10 * time.Second}}
 }
 
+// forwardTransport dials targets directly — Proxy is nil on purpose so the
+// egress proxy never chains through an inherited environment proxy.
+var forwardTransport = &http.Transport{Proxy: nil}
+
 // allowed asks the policy-gate about a host. Fails CLOSED: any gate error denies.
 func (p *EgressProxy) allowed(ctx context.Context, host string) (bool, string) {
 	ok, reason, err := p.Gate.Permit(ctx, host)
@@ -95,7 +99,10 @@ func (p *EgressProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	copyHeaders(outReq.Header, r.Header)
-	resp, err := http.DefaultTransport.RoundTrip(outReq)
+	// The egress proxy is the final hop: dial the target DIRECTLY, never via an
+	// inherited *_PROXY env (that would loop or misroute). forwardTransport has
+	// Proxy:nil deliberately.
+	resp, err := forwardTransport.RoundTrip(outReq)
 	if err != nil {
 		http.Error(w, "upstream error", http.StatusBadGateway)
 		return

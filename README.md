@@ -44,6 +44,11 @@ docs/           ARCHITECTURE.md
 ```bash
 make test                      # python + go test suites
 
+# full end-to-end engagement against a real local target (needs curl + the
+# built Go binaries): recon -> gated exploit -> operator confirm -> loot ->
+# report + verified audit chain, driving the real sandbox + egress proxy.
+make build && python tests/integration/run_engagement.py
+
 # drive an engagement from the CLI:
 cd orchestrator && pip install -e .
 rt scope new --engagement ACME-2026 --allow 10.0.0.0/24 --allow app.acme.test \

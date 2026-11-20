@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -49,10 +51,21 @@ func (LocalRuntime) Exec(ctx context.Context, spec ContainerSpec) (ToolResult, e
 	defer cancel()
 	cmd := exec.CommandContext(cctx, spec.Argv[0], spec.Argv[1:]...)
 	if spec.EgressProxy != "" {
-		cmd.Env = append(cmd.Environ(),
+		// Strip any inherited *_PROXY first — a duplicate env key is ambiguous
+		// (getenv may take the first), which could let a tool bypass the egress
+		// proxy. Rebuild the env with ONLY our proxy pointing at the gateway.
+		env := make([]string, 0, 16)
+		for _, kv := range os.Environ() {
+			k := strings.ToUpper(strings.SplitN(kv, "=", 2)[0])
+			if k == "HTTP_PROXY" || k == "HTTPS_PROXY" || k == "ALL_PROXY" || k == "NO_PROXY" {
+				continue
+			}
+			env = append(env, kv)
+		}
+		cmd.Env = append(env,
 			"HTTP_PROXY="+spec.EgressProxy, "HTTPS_PROXY="+spec.EgressProxy,
 			"http_proxy="+spec.EgressProxy, "https_proxy="+spec.EgressProxy,
-			// defense in depth: no implicit no_proxy bypass
+			// no bypass: every destination must pass the egress proxy
 			"NO_PROXY=", "no_proxy=",
 		)
 	}

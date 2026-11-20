@@ -55,11 +55,13 @@ def render_markdown(store: Store) -> str:
     for i, v in enumerate(vulns, 1):
         d = v.get("data") or {}
         sev = d.get("severity", "info").upper()
+        host = d.get("host") or v.get("target") or "n/a"
+        port = d.get("port")
+        affected = host if (not port or ":" in host) else f"{host}:{port}"
         lines += [
             f"### {i}. {v.get('title') or v['description'][:60]}  — `{sev}`",
             "",
-            f"- **Affected:** {d.get('host', v.get('target', 'n/a'))}"
-            + (f":{d['port']}" if d.get("port") else ""),
+            f"- **Affected:** {affected}",
             f"- **CVE / class:** {d.get('cve', d.get('name', 'n/a'))}",
             f"- **Status:** {d.get('status', 'confirmed')}",
             "",

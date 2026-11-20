@@ -52,10 +52,34 @@ func (nucleiAdapter) Argv(req ToolRequest) ([]string, error) {
 	return argv, nil
 }
 
+// httpGetAdapter is a simple HTTP probe (curl). It honors HTTP(S)_PROXY, so in
+// the sandbox it routes through the egress proxy — i.e. its requests are
+// physically scope-enforced. Useful for recon (banner/headers) and for pulling
+// a specific path (e.g. an exposed file) on a confirmed exploit task.
+type httpGetAdapter struct{}
+
+func (httpGetAdapter) Name() string { return "httpget" }
+
+func (httpGetAdapter) Argv(req ToolRequest) ([]string, error) {
+	if req.Target == "" {
+		return nil, fmt.Errorf("httpget: empty target")
+	}
+	url := req.Target
+	if !strings.Contains(url, "://") {
+		url = "http://" + url
+	}
+	if p := req.Args["path"]; p != "" {
+		url = strings.TrimRight(url, "/") + "/" + strings.TrimLeft(p, "/")
+	}
+	// -sS quiet but show errors, -i include response headers, capped time, and
+	// no redirect-following so a redirect can't bounce the tool off-target.
+	return []string{"curl", "-sS", "-i", "--max-time", "10", url}, nil
+}
+
 // DefaultAdapters is the registry the sandbox boots with.
 func DefaultAdapters() map[string]Adapter {
 	m := map[string]Adapter{}
-	for _, a := range []Adapter{nmapAdapter{}, nucleiAdapter{}} {
+	for _, a := range []Adapter{nmapAdapter{}, nucleiAdapter{}, httpGetAdapter{}} {
 		m[a.Name()] = a
 	}
 	return m
