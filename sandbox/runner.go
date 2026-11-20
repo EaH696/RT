@@ -14,7 +14,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"time"
 )
 
@@ -67,15 +66,45 @@ type Adapter interface {
 	Argv(req ToolRequest) ([]string, error)
 }
 
-// Runner executes tool requests after enforcing tier and scope.
+// Runner executes tool requests after enforcing tier and scope, then hands the
+// command to a ContainerRuntime that pins egress to the policy-gate proxy.
 type Runner struct {
 	Gate     ScopeChecker
 	Adapters map[string]Adapter
+	Runtime  ContainerRuntime // defaults to LocalRuntime (dev/CI, NOT isolated)
+	// EgressProxy is the host:port every tool's network traffic must be pinned
+	// to. Passed to the runtime in each ContainerSpec.
+	EgressProxy string
+	// AllowUnisolated permits running on a non-isolated runtime (LocalRuntime).
+	// Defaults false: the sandbox refuses to run unless egress can be pinned —
+	// fail closed. Set true only for development.
+	AllowUnisolated bool
+}
+
+func (r *Runner) runtime() ContainerRuntime {
+	if r.Runtime != nil {
+		return r.Runtime
+	}
+	return LocalRuntime{}
 }
 
 func (r *Runner) Run(ctx context.Context, req ToolRequest) (ToolResult, error) {
 	if req.Tier.Gated() && !req.Confirmed {
 		return ToolResult{}, fmt.Errorf("refusing %s tool %q: operator confirmation required", req.Tier, req.Tool)
+	}
+	rt := r.runtime()
+	// Fail closed: without physical egress isolation we cannot guarantee a tool
+	// stays in scope, so by default we refuse to run at all. Gated (exploit+)
+	// tiers may NEVER run unisolated, regardless of the dev override.
+	if !rt.Isolated() {
+		if req.Tier.Gated() {
+			return ToolResult{}, fmt.Errorf("refusing %s tool %q on non-isolated runtime %q: "+
+				"gated tiers require pinned egress", req.Tier, req.Tool, rt.Name())
+		}
+		if !r.AllowUnisolated {
+			return ToolResult{}, fmt.Errorf("refusing to run on non-isolated runtime %q "+
+				"(egress cannot be pinned); set AllowUnisolated for development", rt.Name())
+		}
 	}
 	if r.Gate != nil {
 		ok, reason, err := r.Gate.Permit(ctx, req.Target)
@@ -94,19 +123,9 @@ func (r *Runner) Run(ctx context.Context, req ToolRequest) (ToolResult, error) {
 	if err != nil {
 		return ToolResult{}, err
 	}
-	// TODO(appliance): launch argv inside an ephemeral container whose egress
-	// is pinned to the policy-gate proxy. This local exec is a scaffold stand-in.
-	to := req.Timeout
-	if to == 0 {
-		to = 120 * time.Second
-	}
-	cctx, cancel := context.WithTimeout(ctx, to)
-	defer cancel()
-	cmd := exec.CommandContext(cctx, argv[0], argv[1:]...)
-	out, _ := cmd.Output()
-	res := ToolResult{Stdout: string(out)}
-	if cmd.ProcessState != nil {
-		res.ExitCode = cmd.ProcessState.ExitCode()
-	}
-	return res, nil
+	return rt.Run(ctx, ContainerSpec{
+		Argv:        argv,
+		Timeout:     req.Timeout,
+		EgressProxy: r.EgressProxy,
+	})
 }

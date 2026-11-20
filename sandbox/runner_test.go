@@ -32,7 +32,7 @@ func TestGatedToolNeedsConfirmation(t *testing.T) {
 }
 
 func TestOutOfScopeToolDenied(t *testing.T) {
-	r := &Runner{Gate: allowGate{false}, Adapters: DefaultAdapters()}
+	r := &Runner{Gate: allowGate{false}, Adapters: DefaultAdapters(), AllowUnisolated: true}
 	_, err := r.Run(context.Background(), ToolRequest{
 		Tool: "nmap", Target: "10.9.9.9", Tier: TierRecon,
 	})
