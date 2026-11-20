@@ -104,9 +104,17 @@ def cmd_scope(args) -> int:
         print(f"  provision this key in the policy-gate trust store (`-trust`) before use")
     elif args.scope_cmd == "check":
         scope = Scope.load(path)
-        ok = scope.permits(args.target)
-        print(f"{args.target}: {'IN SCOPE' if ok else 'OUT OF SCOPE'}")
-        return 0 if ok else 2
+        in_scope = scope.permits(args.target)
+        in_window = scope.within_window()
+        allowed = in_scope and in_window
+        status = "ALLOWED" if allowed else "DENIED"
+        why = []
+        if not in_scope:
+            why.append("out of scope")
+        if not in_window:
+            why.append("outside testing window")
+        print(f"{args.target}: {status}" + (f" ({', '.join(why)})" if why else ""))
+        return 0 if allowed else 2
     return 0
 
 
