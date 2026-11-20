@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RT Operator Console</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --line:#30363d; --fg:#e6edf3; --mut:#8b949e;
+    --accent:#2f81f7; --ok:#3fb950; --warn:#d29922;
+    --crit:#f85149; --high:#ff7b47; --med:#d29922; --low:#58a6ff; --info:#8b949e;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  header{display:flex;align-items:center;gap:16px;padding:14px 22px;border-bottom:1px solid var(--line);background:var(--panel)}
+  header h1{font-size:16px;margin:0;letter-spacing:.3px}
+  header .eng{color:var(--mut);font-size:13px}
+  header .obj{color:var(--fg);font-size:13px}
+  .spacer{flex:1}
+  .badge{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line)}
+  .badge.ok{color:var(--ok);border-color:#1f6f33;background:#0f2417}
+  .badge.bad{color:var(--crit);border-color:#6f1f1f;background:#2a1313}
+  main{display:grid;grid-template-columns:1.2fr 1fr;gap:18px;padding:22px;max-width:1200px;margin:0 auto}
+  .col{display:flex;flex-direction:column;gap:18px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .card h2{font-size:13px;text-transform:uppercase;letter-spacing:.5px;color:var(--mut);margin:0;padding:12px 16px;border-bottom:1px solid var(--line)}
+  .card .body{padding:6px 0}
+  .kpis{display:flex;gap:10px;padding:0 22px 4px}
+  .kpi{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .kpi .n{font-size:24px;font-weight:700}
+  .kpi .l{color:var(--mut);font-size:12px}
+  table{width:100%;border-collapse:collapse}
+  td,th{text-align:left;padding:9px 16px;border-bottom:1px solid var(--line);font-size:13px}
+  th{color:var(--mut);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.4px}
+  tr:last-child td{border-bottom:none}
+  .sev{font-size:11px;font-weight:700;padding:2px 8px;border-radius:5px;text-transform:uppercase}
+  .sev.critical{background:#2a1313;color:var(--crit)} .sev.high{background:#2a1a10;color:var(--high)}
+  .sev.medium{background:#2a2410;color:var(--med)} .sev.low{background:#10203a;color:var(--low)}
+  .sev.info,.sev.none{background:#1c2128;color:var(--info)}
+  .tier{font-size:11px;color:var(--mut)}
+  .q-item{padding:14px 16px;border-bottom:1px solid var(--line)}
+  .q-item:last-child{border-bottom:none}
+  .q-head{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+  .q-tier{font-size:11px;font-weight:700;color:var(--crit);background:#2a1313;padding:2px 8px;border-radius:5px;text-transform:uppercase}
+  .q-title{font-weight:600}
+  .q-desc{color:var(--mut);font-size:12px;margin:4px 0 10px}
+  .q-act{display:flex;gap:8px;align-items:center}
+  input,button{font:inherit}
+  input{background:#0d1117;border:1px solid var(--line);color:var(--fg);border-radius:6px;padding:6px 9px}
+  button{background:var(--accent);color:#fff;border:none;border-radius:6px;padding:7px 14px;font-weight:600;cursor:pointer}
+  button:hover{filter:brightness(1.1)} button:disabled{opacity:.5;cursor:default}
+  .empty{color:var(--mut);padding:18px 16px;font-size:13px}
+  .audit{max-height:260px;overflow:auto}
+  .audit td{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+  .act-confirm{color:var(--ok)} .act-blocked{color:var(--crit)}
+  .foot{color:var(--mut);font-size:11px;padding:10px 22px;text-align:center}
+</style>
+</head>
+<body>
+<header>
+  <h1>🛡️ RT Operator Console</h1>
+  <span class="eng" id="eng">—</span>
+  <span class="obj" id="obj"></span>
+  <div class="spacer"></div>
+  <span class="badge" id="auditBadge">audit —</span>
+</header>
+
+<div class="kpis" id="kpis"></div>
+
+<main>
+  <div class="col">
+    <div class="card">
+      <h2>⚠ Approval queue — exploit actions awaiting your confirmation</h2>
+      <div class="body" id="queue"><div class="empty">loading…</div></div>
+    </div>
+    <div class="card">
+      <h2>Findings</h2>
+      <div class="body"><table id="findings"><tbody></tbody></table></div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="card">
+      <h2>Tasks</h2>
+      <div class="body"><table id="tasks"><tbody></tbody></table></div>
+    </div>
+    <div class="card">
+      <h2>Audit log <span id="auditCount" class="tier"></span></h2>
+      <div class="body audit"><table id="audit"><tbody></tbody></table></div>
+    </div>
+  </div>
+</main>
+<div class="foot">Loopback-only, no auth — run behind the gateway / an SSH tunnel in production. Polls every 2s.</div>
+
+<script>
+const PRE_STATE={"engagement": {"id": "LAB-2026", "objective": "assess the ACME web app", "status": "active", "scope_ref": "scope.json"}, "counts": {"findings": 6, "vulns": 5, "open_tasks": 1, "queue": 1}, "findings": [{"id": "f001", "kind": "vuln", "title": "exposed .env with DB credentials", "target": "127.0.0.1:9000", "severity": "critical"}, {"id": "f002", "kind": "vuln", "title": "exposed .git/config", "target": "127.0.0.1:9000", "severity": "high"}, {"id": "f003", "kind": "vuln", "title": "exposed database backup", "target": "127.0.0.1:9000", "severity": "high"}, {"id": "f004", "kind": "vuln", "title": "admin login exposed", "target": "127.0.0.1:9000", "severity": "medium"}, {"id": "f005", "kind": "vuln", "title": "reflected XSS in search", "target": "127.0.0.1:9000", "severity": "medium"}, {"id": "f006", "kind": "service", "title": "http nginx/1.18.0", "target": "127.0.0.1:9000", "severity": null}], "tasks": [{"id": "t001", "tier": "exploit", "target": "127.0.0.1:9000", "title": "dump /.env", "status": "open", "open": true, "requires_confirmation": true, "confirmed_by": null}], "queue": [{"id": "t001", "tier": "exploit", "target": "127.0.0.1:9000", "title": "dump /.env", "description": "dump /.env (exfil secrets, proof)"}]}, PRE_AUDIT={"verified": true, "broken_at": null, "entries": [{"seq": 1, "ts": "2026-11-20T03:31:16Z", "actor": "operator", "action": "engagement.init", "target": "", "details": {}}, {"seq": 2, "ts": "2026-11-20T03:31:16Z", "actor": "recon-agent", "action": "finding.add", "target": "127.0.0.1:9000", "details": {"finding": "f001", "kind": "vuln"}}, {"seq": 3, "ts": "2026-11-20T03:31:16Z", "actor": "recon-agent", "action": "finding.add", "target": "127.0.0.1:9000", "details": {"finding": "f002", "kind": "vuln"}}, {"seq": 4, "ts": "2026-11-20T03:31:16Z", "actor": "recon-agent", "action": "finding.add", "target": "127.0.0.1:9000", "details": {"finding": "f003", "kind": "vuln"}}, {"seq": 5, "ts": "2026-11-20T03:31:16Z", "actor": "recon-agent", "action": "finding.add", "target": "127.0.0.1:9000", "details": {"finding": "f004", "kind": "vuln"}}, {"seq": 6, "ts": "2026-11-20T03:31:16Z", "actor": "recon-agent", "action": "finding.add", "target": "127.0.0.1:9000", "details": {"finding": "f005", "kind": "vuln"}}, {"seq": 7, "ts": "2026-11-20T03:31:16Z", "actor": "recon-agent", "action": "finding.add", "target": "127.0.0.1:9000", "details": {"finding": "f006", "kind": "service"}}, {"seq": 8, "ts": "2026-11-20T03:31:16Z", "actor": "commander", "action": "task.create", "target": "127.0.0.1:9000", "details": {"task": "t001", "tier": "exploit"}}]};
+async function refresh(){ render(PRE_STATE, PRE_AUDIT); }
+
+const $ = s => document.querySelector(s);
+const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+async function confirmTask(id){
+  const op = prompt("Confirm exploit task "+id+"\nYour operator name (recorded in the audit log):");
+  if(!op) return;
+  const r = await fetch('/api/confirm',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({task_id:id,operator:op})});
+  const d = await r.json();
+  if(!d.ok){ alert("Could not confirm: "+d.error); }
+  refresh();
+}
+
+function renderQueue(q){
+  if(!q.length){ return '<div class="empty">No actions awaiting approval.</div>'; }
+  return q.map(t=>`<div class="q-item">
+    <div class="q-head"><span class="q-tier">${esc(t.tier)}</span>
+      <span class="q-title">${esc(t.title)}</span></div>
+    <div class="q-desc">${esc(t.description)} &nbsp;·&nbsp; target ${esc(t.target)}</div>
+    <div class="q-act"><button onclick="confirmTask('${esc(t.id)}')">Confirm ${esc(t.id)}</button>
+      <span class="tier">requires operator approval before it can run</span></div>
+  </div>`).join('');
+}
+function sevTag(s){ const c=(s||'none').toLowerCase(); return `<span class="sev ${c}">${esc(s||'—')}</span>`; }
+
+function render(st, a){
+  $('#eng').textContent = st.engagement.id + '  ·  ' + (st.engagement.status||'');
+  $('#obj').textContent = st.engagement.objective ? '“'+st.engagement.objective+'”' : '';
+  const c = st.counts;
+  $('#kpis').innerHTML = [['findings',c.findings],['vulnerabilities',c.vulns],
+      ['open tasks',c.open_tasks],['awaiting approval',c.queue]]
+    .map(([l,n])=>`<div class="kpi"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
+  $('#queue').innerHTML = renderQueue(st.queue);
+  $('#findings tbody').innerHTML = st.findings.length ? st.findings.map(f=>`<tr>
+      <td>${esc(f.id)}</td><td>${esc(f.kind)}</td><td>${esc(f.title)}</td>
+      <td>${f.kind==='vuln'?sevTag(f.severity):''}</td></tr>`).join('')
+    : '<tr><td class="empty" colspan=4>No findings yet.</td></tr>';
+  $('#tasks tbody').innerHTML = st.tasks.map(t=>`<tr>
+      <td>${esc(t.id)}</td><td class="tier">${esc(t.tier)}</td>
+      <td>${esc(t.title)}</td>
+      <td>${t.open?(t.requires_confirmation&&!t.confirmed_by?'<span class="sev medium">gated</span>':esc(t.status)):'<span class="sev low">done</span>'}</td>
+    </tr>`).join('');
+
+  const badge = $('#auditBadge');
+  badge.textContent = a.verified ? '✓ audit chain verified' : '✗ audit BROKEN @'+a.broken_at;
+  badge.className = 'badge '+(a.verified?'ok':'bad');
+  $('#auditCount').textContent = a.entries.length+' entries';
+  $('#audit tbody').innerHTML = a.entries.slice().reverse().map(e=>`<tr>
+      <td>${e.seq}</td><td class="act-${e.action.split('.').pop()}">${esc(e.action)}</td>
+      <td>${esc(e.actor)}</td><td>${esc(e.target||'')}</td></tr>`).join('');
+}
+
+</script>
+</body>
+</html>
+
+refresh();
+</script>
+</body></html>

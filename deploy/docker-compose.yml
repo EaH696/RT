@@ -1,38 +1,52 @@
-# RT self-hosted appliance — local/dev composition.
+# RT Community Edition — self-hosted appliance (single-host composition).
 #
-# On a real appliance these ship as a signed bundle and the sandbox gets a
-# hardened runtime (gVisor/Firecracker) with egress pinned to the policy-gate.
-# This compose file is the development stand-in.
+# This runs the full open-source core: policy-gate, sandbox (with egress proxy),
+# and the orchestrator serving the operator console. Bring an engagement up with
+# `./deploy/install.sh` or `docker compose -f deploy/docker-compose.yml up`.
+#
+# The multi-user production edge (auth/TLS gateway), scale-out Postgres/Neo4j,
+# and a hardened gVisor/Firecracker sandbox ship with RT Enterprise — see
+# EDITIONS.md.
 services:
   policy-gate:
     build: ../policy-gate
+    image: ghcr.io/eah696/rt-policy-gate:latest
     command: ["-scope", "/scope/scope.json", "-addr", ":8700"]
     volumes:
       - ./scope:/scope:ro
-    ports:
-      - "8700:8700"
+    expose:
+      - "8700"
+    restart: unless-stopped
 
   sandbox:
     build: ../sandbox
+    image: ghcr.io/eah696/rt-sandbox:latest
     depends_on: [policy-gate]
-    # In production: run with a container runtime that can launch nested,
-    # egress-controlled microVMs for each tool run.
-
-  gateway:
-    build: ../gateway
-    command: ["-addr", ":8080"]
-    depends_on: [policy-gate]
-    ports:
-      - "8080:8080"
+    command: ["-addr", ":8710", "-egress-addr", ":8720", "-gate", "http://policy-gate:8700"]
+    environment:
+      # Set to a gVisor/Firecracker launcher for microVM isolation (Enterprise);
+      # unset => LocalRuntime (dev/community, no isolation).
+      - RT_CONTAINER_SHIM=${RT_CONTAINER_SHIM:-}
+    expose:
+      - "8710"
+    restart: unless-stopped
+    # In production the tool containers this launches must have the egress proxy
+    # (:8720) as their ONLY route (nftables/transparent redirect).
 
   orchestrator:
     build: ../orchestrator
+    image: ghcr.io/eah696/rt-orchestrator:latest
     depends_on: [policy-gate, sandbox]
+    # Serve the operator console for this engagement. Bound to loopback on the
+    # host — open http://127.0.0.1:8900 or tunnel over SSH. No auth by design.
+    command: ["--store", "/engagements/current", "serve", "--host", "0.0.0.0", "--port", "8900"]
     environment:
       # Point at a locally served model so no target data leaves the appliance.
       - RT_AGENT_BIN=${RT_AGENT_BIN:-claude}
     volumes:
       - ./engagements:/engagements
-# A real deployment also adds: postgres (findings + hash-chained audit log),
-# neo4j (attack graph), a durable workflow engine (Temporal) for pause/resume
-# across the exploit confirmation gate, and the operator console (console/).
+    ports:
+      - "127.0.0.1:8900:8900"
+    restart: unless-stopped
+# A production deployment adds: postgres (findings + audit log at scale), neo4j
+# (attack-graph queries), and the auth/TLS gateway — all RT Enterprise.

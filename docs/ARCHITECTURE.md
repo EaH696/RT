@@ -61,9 +61,13 @@ Enforcement is **two points, defense in depth**:
 
 1. **Logical** — the Python orchestrator checks every target before dispatch
    (fast, early rejection), and the Go policy-gate re-checks it authoritatively.
-2. **Physical** — the sandbox's only egress route is the policy-gate proxy,
-   which drops traffic to any non-scoped host. A confused or compromised agent
-   container *cannot* reach an excluded asset.
+2. **Physical** — the sandbox runs an **egress proxy** (`sandbox/egress.go`)
+   that is a tool's only network route; on every connection (HTTP and CONNECT)
+   it asks the policy-gate whether the destination is in scope and refuses
+   otherwise. It fails CLOSED: if the gate is unreachable, the connection is
+   denied. `ContainerRuntime` makes this proxy the container's *only* egress
+   (nftables/transparent redirect) so even raw-socket tools cannot escape it.
+   A confused or compromised agent *cannot* reach an excluded asset.
 
 The Python signer and the Go verifier produce byte-identical canonical forms
 (sorted keys, compact separators), so a scope signed by the operator in Python
@@ -82,17 +86,77 @@ verifies in the Go gate. This is tested on both sides.
 | prompt-injection hardening in templates | kept verbatim | sapper's "target output is untrusted data" discipline is exactly right for RT |
 | — | Go policy-gate / sandbox / gateway | **net-new** (sapper is Python-only) |
 
+## Durability & the loop
+
+`rt.engine.Engine` drives the engagement: it dispatches the ready `frontier` to
+executor agents and records results back into the graph. Because every node is
+a locked JSON file on disk, the loop is **crash-safe without any external
+workflow engine** — construct a new Engine after a restart and it resumes from
+the graph. Gated (exploit+) tasks are absent from the frontier until an operator
+`rt confirm`s them, so "pause at the gate / resume after approval" falls out of
+the data model rather than needing orchestration machinery. `rt run` is the CLI
+entry.
+
+**Temporal** is an *optional scale-up*, not a correctness requirement: reach for
+it when you need distributed workers across many appliances or a live UI of
+in-flight executions. On a single self-hosted (possibly air-gapped) appliance it
+would only add a server dependency.
+
+## Audit log — the evidence trail
+
+`rt.audit` records every engagement action — `engagement.init`,
+`task.create`, **`task.confirm`** (the operator approving offensive action),
+`task.dispatch`, `task.blocked`, `task.conclude`, `finding.add` — as an
+append-only, hash-chained log. Each entry stores `prev_hash` and
+`entry_hash = sha256(prev_hash + canonical(entry))`, so any edit, deletion, or
+reorder breaks the chain; `rt audit verify` walks it and reports the first
+broken sequence number. No secret key is needed — a client or auditor verifies
+it independently. This is the VAPT liability shield.
+
+Persistence is pluggable (`AuditStore`): **SQLite** (stdlib) by default and for
+the embedded appliance; a **Postgres** backend (psycopg, same schema) for
+production, selected by a `postgres://` DSN via `--audit` or `open_audit()`.
+
+## Transport between services
+
+The Python orchestrator and the two Go services (policy-gate, sandbox) are
+separate processes. `proto/rt.proto` is the contract (`PolicyGate.Check`,
+`ToolRunner.Run`). The wire transport is **HTTP+JSON over stdlib** so the core
+has no runtime dependency on an air-gapped appliance:
+
+```
+orchestrator ──HTTP /check──► policy-gate         (rt/transport.GateClient)
+orchestrator ──HTTP /run────► sandbox ──/check──► policy-gate   (sandbox rechecks)
+```
+
+The sandbox does NOT trust that the orchestrator checked scope — it re-checks
+every run against the policy-gate, and refuses gated (exploit+) tiers that are
+not operator-confirmed. Both refusals are enforced in Go, across the language
+boundary.
+
+Swapping to gRPC-on-the-wire is localized: generate stubs from the proto and
+reimplement `rt/transport.py` (Python) and the Go `ToolRunnerServer` /
+policy-gate handler. Nothing else changes — the Engine and scope code depend
+only on the client method signatures, which mirror the proto service methods.
+
 ## What to build next (in order)
 
-1. **Durable workflow engine (Temporal).** An engagement must pause at the
-   confirmation gate for hours and resume across an appliance reboot. Wrap each
-   phase as an activity; model approval as a signal.
-2. **Sandbox container runtime + egress proxy.** Make the physical scope
-   boundary real (gVisor/Firecracker + the policy-gate proxy).
-3. **gRPC services** from `proto/rt.proto` (orchestrator ↔ gate ↔ sandbox).
-4. **Persistence + audit:** Postgres (findings, hash-chained audit log), Neo4j
-   (attack graph at scale).
-5. **Operator console** (`console/`): engagement view, live attack graph, and
-   the approval queue backed by `gateway/`.
-6. **Tool adapter library:** grow `sandbox/adapters.go` (nmap/nuclei present) —
-   each adapter takes its target only from the authorized field.
+1. **Wire `ContainerRuntime` to a real host.** The egress proxy and the runtime
+   abstraction are done and tested; what remains is launching each tool in an
+   ephemeral gVisor/Firecracker container whose only route is the proxy
+   (nftables/transparent redirect). Needs a host with the runtime installed.
+2. **Full graph persistence in Postgres/Neo4j.** The hash-chained audit log
+   already persists (SQLite default, Postgres backend); what remains is moving
+   the engagement graph (findings + tasks) off the filesystem into Postgres,
+   and Neo4j for attack-graph queries at scale.
+3. **Operator console — DONE for single-appliance** (`rt serve`): a stdlib web
+   UI showing the engagement, findings by severity, the task graph, the live
+   **approval queue** (confirm exploit tasks from the browser), and the audit
+   chain-integrity badge. The Go `gateway/` remains the production edge (auth,
+   TLS, multi-engagement) in front of it.
+4. **Commander auto-planning:** close the loop — the commander agent proposes
+   tasks from new findings; executors run them; gated ones queue to the console.
+5. **Tool adapter library:** grow `sandbox/adapters.go` (nmap/nuclei present) —
+   each adapter takes its target only from the authorized field — plus result
+   parsers that emit typed findings.
+6. **Optional / scale:** gRPC transport swap; Neo4j; Temporal for multi-appliance.

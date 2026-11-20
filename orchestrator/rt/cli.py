@@ -28,6 +28,14 @@ def _store(args) -> Store:
     return Store(Path(args.store))
 
 
+def _audit(args):
+    """Open the engagement audit log. Defaults to <store>/audit.sqlite; override
+    with --audit (e.g. a postgres:// DSN in production)."""
+    from .audit import open_audit
+    dsn = getattr(args, "audit", None) or str(Path(args.store) / "audit.sqlite")
+    return open_audit(dsn)
+
+
 def _kv(pairs: list[str] | None) -> dict:
     out = {}
     for p in pairs or []:
@@ -47,6 +55,8 @@ def cmd_init(args) -> int:
     _store(args).init(
         engagement_id=args.engagement, objective=args.objective, scope_ref=str(scope_path),
     )
+    _audit(args).record("operator", "engagement.init", engagement_id=args.engagement,
+                        scope_signed_by=scope.signed_by, objective=args.objective)
     print(f"initialized engagement {args.engagement} (scope signed by {scope.signed_by})")
     return 0
 
@@ -128,6 +138,8 @@ def cmd_finding(args) -> int:
     f = s.add_finding(args.description, creator=args.worker, kind=args.kind,
                       data=_kv(args.data), target=args.target, title=args.title,
                       doc=args.doc, source_task=getattr(args, "from_task", None))
+    _audit(args).record(args.worker, "finding.add", engagement_id=s.load_project().get("engagement_id", ""),
+                        target=args.target or "", finding=f["id"], kind=f["kind"])
     print(f"recorded {f['id']} ({f['kind']})")
     return 0
 
@@ -136,6 +148,8 @@ def cmd_task(args) -> int:
     s = _store(args); s.require()
     t = s.add_task(args.from_ids, args.description, creator=args.worker,
                    risk_tier=args.tier, target=args.target, title=args.title, doc=args.doc)
+    _audit(args).record(args.worker, "task.create", engagement_id=s.load_project().get("engagement_id", ""),
+                        target=args.target or "", task=t["id"], tier=t["risk_tier"])
     note = "  ⚠ NEEDS OPERATOR CONFIRMATION" if t["requires_confirmation"] else ""
     print(f"created {t['id']} [{t['risk_tier']}]{note}")
     return 0
@@ -144,7 +158,55 @@ def cmd_task(args) -> int:
 def cmd_confirm(args) -> int:
     s = _store(args); s.require()
     t = s.confirm_task(args.task_id, operator=args.operator)
+    # the single most important audit event: a human approving offensive action
+    _audit(args).record(args.operator, "task.confirm",
+                        engagement_id=s.load_project().get("engagement_id", ""),
+                        target=t.get("target") or "", task=t["id"], tier=t["risk_tier"])
     print(f"{t['id']} confirmed by {t['confirmed_by']} — now claimable")
+    return 0
+
+
+def cmd_run(args) -> int:
+    s = _store(args); s.require()
+    from .engine import Engine, default_agent
+    eng = Engine(s, default_agent(model=args.model), worker=args.worker, audit=_audit(args))
+    report = eng.run(max_steps=args.max_steps)
+    for o in report.steps:
+        print(f"  {o.task_id}: {o.status}" + (f" -> {o.finding_id}" if o.finding_id else ""))
+    print(f"ran {len(report.steps)} task(s), {report.concluded} concluded; "
+          f"stopped: {report.stopped_reason}")
+    if report.stopped_reason == "awaiting operator confirmation":
+        print("→ review and approve gated tasks with `rt queue` / `rt confirm`")
+    return 0
+
+
+def cmd_audit(args) -> int:
+    log = _audit(args)
+    if args.audit_cmd == "verify":
+        ok, broken = log.verify()
+        if ok:
+            print(f"audit chain VERIFIED ({len(log.entries())} entries)")
+            return 0
+        print(f"audit chain BROKEN at seq {broken}", file=sys.stderr)
+        return 2
+    if args.audit_cmd == "export":
+        print(log.export_jsonl() if args.jsonl else log.export_markdown())
+        return 0
+    # default: show
+    print(log.export_markdown())
+    return 0
+
+
+def cmd_serve(args) -> int:
+    from .console import serve
+    dsn = getattr(args, "audit", None) or str(Path(args.store) / "audit.sqlite")
+    httpd = serve(args.store, audit_dsn=dsn, host=args.host, port=args.port)
+    print(f"RT operator console on http://{args.host}:{args.port}  (store: {args.store})")
+    print("Ctrl-C to stop.")
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        httpd.shutdown()
     return 0
 
 
@@ -167,6 +229,8 @@ def cmd_kb(args) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="rt", description="RT agentic pentest orchestrator")
     p.add_argument("--store", default=".rt", help="engagement graph directory")
+    p.add_argument("--audit", default=None,
+                   help="audit log DSN (default <store>/audit.sqlite; e.g. postgres://...)")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     i = sub.add_parser("init"); i.add_argument("--engagement", required=True)
@@ -187,6 +251,17 @@ def build_parser() -> argparse.ArgumentParser:
                      ("frontier", cmd_frontier), ("queue", cmd_queue), ("report", cmd_report)):
         sp = sub.add_parser(name); sp.set_defaults(func=fn)
 
+    sv = sub.add_parser("serve", help="run the operator console web UI")
+    sv.add_argument("--host", default="127.0.0.1")
+    sv.add_argument("--port", type=int, default=8900)
+    sv.set_defaults(func=cmd_serve)
+
+    r = sub.add_parser("run", help="drive the durable engagement loop")
+    r.add_argument("--model", default="local-default")
+    r.add_argument("--worker", default="executor")
+    r.add_argument("--max-steps", type=int, default=100, dest="max_steps")
+    r.set_defaults(func=cmd_run)
+
     f = sub.add_parser("finding"); f.add_argument("description")
     f.add_argument("-k", "--kind", default="note"); f.add_argument("--target")
     f.add_argument("-d", "--data", action="append"); f.add_argument("--title")
@@ -201,6 +276,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     c = sub.add_parser("confirm"); c.add_argument("task_id")
     c.add_argument("--operator", required=True); c.set_defaults(func=cmd_confirm)
+
+    a = sub.add_parser("audit", help="engagement audit log")
+    asub = a.add_subparsers(dest="audit_cmd")
+    asub.add_parser("show"); asub.add_parser("verify")
+    aex = asub.add_parser("export"); aex.add_argument("--jsonl", action="store_true")
+    a.set_defaults(func=cmd_audit, audit_cmd="show")
 
     k = sub.add_parser("kb"); k.add_argument("query"); k.add_argument("-t", "--tag")
     k.set_defaults(func=cmd_kb)

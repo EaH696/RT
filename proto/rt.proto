@@ -1,6 +1,12 @@
-// RT inter-service contract. The Python orchestrator talks to the Go sandbox
-// and policy-gate over gRPC using these messages. Generate stubs with protoc
-// for both languages; kept here as the single source of truth for the seam.
+// RT inter-service contract: the single source of truth for the seam between
+// the Python orchestrator and the Go sandbox + policy-gate.
+//
+// TRANSPORT: today these services are reached over HTTP+JSON (stdlib only, so
+// the core runs on an air-gapped appliance): the JSON field names below map
+// 1:1 to the request/response bodies. POST /check -> ScopeCheckResponse,
+// POST /run -> ToolResult. To move the wire to gRPC, generate stubs from this
+// file and reimplement rt/transport.py and the Go HTTP handlers against them;
+// this .proto does not change.
 syntax = "proto3";
 
 package rt.v1;

@@ -1,0 +1,75 @@
+name: Release
+
+# Build and publish the RT Community Edition appliance images to GHCR, and
+# attach a release, when a v* tag is pushed.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  images:
+    name: build & push ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - service: policy-gate
+            context: ./policy-gate
+            image: rt-policy-gate
+          - service: sandbox
+            context: ./sandbox
+            image: rt-sandbox
+          - service: orchestrator
+            context: ./orchestrator
+            image: rt-orchestrator
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  release:
+    name: GitHub release
+    runs-on: ubuntu-latest
+    needs: [images]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          body: |
+            RT Community Edition ${{ github.ref_name }}.
+
+            Appliance images (GHCR):
+            - `ghcr.io/${{ github.repository_owner }}/rt-policy-gate:${{ github.ref_name }}`
+            - `ghcr.io/${{ github.repository_owner }}/rt-sandbox:${{ github.ref_name }}`
+            - `ghcr.io/${{ github.repository_owner }}/rt-orchestrator:${{ github.ref_name }}`
+
+            Quick start: `./deploy/install.sh up` (see README). See CHANGELOG.md
+            for details and EDITIONS.md for Community vs Enterprise.
+
+            ⚠️ Authorized security testing only.

@@ -1,4 +1,13 @@
 RT — HexaLab Technologies
+Copyright (c) 2026 HexaLab Technologies
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE),
+except for the third-party portions noted below, which remain under the MIT
+License.
+
+-------------------------------------------------------------------------------
+Third-party software: sapper-v2
+-------------------------------------------------------------------------------
 
 This product includes software derived from sapper-v2:
     https://github.com/N1nEmAn/sapper-v2
@@ -18,7 +27,8 @@ Per the MIT License, the above copyright notice and the MIT permission notice
 (LICENSE-THIRD-PARTY) must be retained in all copies or substantial portions
 of these files.
 
-RT's own additions — the signed-scope engagement model (rt.scope), the Go
-policy-gate, the tool-execution sandbox, the gateway/approval service, the
-findings/report module, and the inter-service contract — are (c) 2026 HexaLab
-Technologies; see LICENSE.
+RT's own additions — the signed-scope engagement model (rt.scope), the durable
+engagement engine, the Go policy-gate, the tool-execution sandbox and egress
+proxy, the hash-chained audit log, the operator console, the findings/report
+module, and the inter-service contract — are (c) 2026 HexaLab Technologies and
+are licensed under the Apache License, Version 2.0.
