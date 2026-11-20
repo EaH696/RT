@@ -1,0 +1,12 @@
+[
+  {
+    "token": "REPLACE-WITH-A-LONG-RANDOM-SECRET",
+    "operator": "esmadi@hexalab.my",
+    "engagements": ["ACME-2026"]
+  },
+  {
+    "token": "REPLACE-WITH-ANOTHER-SECRET-FOR-THE-LEAD",
+    "operator": "lead@hexalab.my",
+    "engagements": ["*"]
+  }
+]

@@ -20,7 +20,13 @@ services:
 
   gateway:
     build: ../gateway
-    command: ["-addr", ":8080"]
+    # The production edge: auth + TLS + multi-engagement routing in front of the
+    # orchestrator's `rt serve` console backends. Copy the *.example.json in
+    # ./gateway to real registry.json / tokens.json (with long random tokens)
+    # and mount TLS material before any real engagement.
+    command: ["-addr", ":8080", "-registry", "/cfg/registry.json", "-tokens", "/cfg/tokens.json"]
+    volumes:
+      - ./gateway:/cfg:ro
     depends_on: [policy-gate]
     ports:
       - "8080:8080"
