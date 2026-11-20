@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -34,7 +35,9 @@ func main() {
 	if !scope.VerifyTrusted(trust) {
 		log.Fatalf("REFUSING TO START: scope %s has an invalid signature or an untrusted signing key", *scopePath)
 	}
-	log.Printf("policy-gate up for engagement %s (scope signed by %v, key trusted)", scope.EngagementID, deref(scope.SignedBy))
+	limiter := newRateLimiter(scope.MaxRPS)
+	log.Printf("policy-gate up for engagement %s (scope signed by %v, key trusted, max_rps=%d)",
+		scope.EngagementID, deref(scope.SignedBy), scope.MaxRPS)
 
 	http.HandleFunc("/check", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -45,6 +48,12 @@ func main() {
 			return
 		}
 		d := scope.Decide(req.Target)
+		// Rate cap is checked only for targets that are otherwise allowed, so a
+		// flood of out-of-scope probes cannot exhaust a host's budget.
+		if d.Allowed && !limiter.allow(hostOf(req.Target)) {
+			d = Decision{req.Target, false,
+				fmt.Sprintf("rate cap exceeded (max_rps=%d) for host", scope.MaxRPS)}
+		}
 		if !d.Allowed {
 			log.Printf("DENY %s: %s", d.Target, d.Reason)
 		}

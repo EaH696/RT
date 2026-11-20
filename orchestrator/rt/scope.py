@@ -157,6 +157,25 @@ class Scope:
         if not self.permits(target):
             raise ScopeError(f"target {target!r} is OUT OF SCOPE for {self.engagement_id}")
 
+    def within_window(self, now=None) -> bool:
+        """Whether `now` (UTC) falls inside the ROE testing window. Mirrors the
+        Go gate: a malformed window fails CLOSED (returns False). The gate is the
+        authoritative enforcer; this is the orchestrator's early, logical check."""
+        from datetime import datetime, timezone
+        now = now or datetime.now(timezone.utc)
+
+        def _parse(v: str):
+            return datetime.fromisoformat(v.replace("Z", "+00:00"))
+
+        try:
+            if self.window_start and now < _parse(self.window_start):
+                return False
+            if self.window_end and now > _parse(self.window_end):
+                return False
+        except ValueError:
+            return False  # malformed window -> fail closed
+        return True
+
     # -- io ---------------------------------------------------------------- #
     @classmethod
     def load(cls, path: str | Path) -> "Scope":

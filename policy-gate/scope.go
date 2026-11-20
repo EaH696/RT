@@ -17,6 +17,7 @@ import (
 	"net"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Scope mirrors rt/scope.py. Keep the JSON field names in sync with the Python
@@ -143,13 +144,47 @@ type Decision struct {
 }
 
 func (s Scope) Decide(target string) Decision {
+	return s.DecideAt(target, time.Now().UTC())
+}
+
+// DecideAt is Decide with an explicit clock, for testability. Order matters:
+// signature/trust first, then the ROE time window, then target scope.
+func (s Scope) DecideAt(target string, now time.Time) Decision {
 	if !s.VerifyTrusted(s.trust) {
 		return Decision{target, false, "scope signature invalid or signing key not trusted"}
+	}
+	if ok, reason := s.withinWindow(now); !ok {
+		return Decision{target, false, reason}
 	}
 	if s.Permits(target) {
 		return Decision{target, true, "in scope"}
 	}
 	return Decision{target, false, fmt.Sprintf("%q out of scope for %s", target, s.EngagementID)}
+}
+
+// withinWindow enforces the ROE testing window (Section 3 of the engagement
+// authorization). A malformed window fails CLOSED — a safety control that
+// cannot be parsed must not silently allow testing.
+func (s Scope) withinWindow(now time.Time) (bool, string) {
+	if s.WindowStart != nil && *s.WindowStart != "" {
+		t, err := time.Parse(time.RFC3339, *s.WindowStart)
+		if err != nil {
+			return false, "engagement window_start is malformed (fix scope.json)"
+		}
+		if now.Before(t) {
+			return false, "engagement testing window has not started yet"
+		}
+	}
+	if s.WindowEnd != nil && *s.WindowEnd != "" {
+		t, err := time.Parse(time.RFC3339, *s.WindowEnd)
+		if err != nil {
+			return false, "engagement window_end is malformed (fix scope.json)"
+		}
+		if now.After(t) {
+			return false, "engagement testing window has ended"
+		}
+	}
+	return true, ""
 }
 
 func hostOf(target string) string {

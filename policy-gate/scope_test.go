@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"testing"
+	"time"
 )
 
 // signWith signs a scope with an Ed25519 seed exactly as rt.scope.Scope.sign()
@@ -86,5 +87,41 @@ func TestUnsignedScopeIsDenied(t *testing.T) {
 	s := sampleScope()
 	if s.Decide("10.0.0.5").Allowed {
 		t.Fatal("unsigned scope must never authorize a target")
+	}
+}
+
+func strptr(s string) *string { return &s }
+
+func TestTimeWindowEnforced(t *testing.T) {
+	seed := make([]byte, 32)
+	base := sampleScope()
+	base.WindowStart = strptr("2026-11-01T00:00:00Z")
+	base.WindowEnd = strptr("2026-11-30T23:59:59Z")
+	s, pub := signWith(base, "esmadi", seed)
+	s = s.WithTrust(map[string]bool{pub: true})
+
+	inside := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	before := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
+	after := time.Date(2026, 12, 1, 12, 0, 0, 0, time.UTC)
+
+	if !s.DecideAt("10.0.0.5", inside).Allowed {
+		t.Fatal("in-window, in-scope target must be allowed")
+	}
+	if s.DecideAt("10.0.0.5", before).Allowed {
+		t.Fatal("before the window opens, nothing is allowed")
+	}
+	if s.DecideAt("10.0.0.5", after).Allowed {
+		t.Fatal("after the window closes, nothing is allowed")
+	}
+}
+
+func TestMalformedWindowFailsClosed(t *testing.T) {
+	seed := make([]byte, 32)
+	base := sampleScope()
+	base.WindowEnd = strptr("not-a-timestamp")
+	s, pub := signWith(base, "esmadi", seed)
+	s = s.WithTrust(map[string]bool{pub: true})
+	if s.Decide("10.0.0.5").Allowed {
+		t.Fatal("a malformed window must fail closed, not allow testing")
 	}
 }
