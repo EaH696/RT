@@ -193,8 +193,13 @@ def cmd_run(args) -> int:
     history = engine.run(max_rounds=args.max_rounds)
     created = sum(len(r.created) for r in history)
     dispatched = sum(len(r.dispatched) for r in history)
+    failed = sum(len(r.failed) for r in history)
     print(f"ran {len(history)} round(s): {created} task(s) created, "
-          f"{dispatched} dispatched")
+          f"{dispatched} dispatched, {failed} failed")
+    if engine.last_errors:
+        print("executor failures (tasks left open for the next run):")
+        for err in engine.last_errors[:10]:
+            print(f"  - {err}")
     pending = awaiting_confirmation(s)
     if pending:
         print(f"\n⚠  {len(pending)} task(s) awaiting operator confirmation — "

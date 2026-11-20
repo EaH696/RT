@@ -118,6 +118,30 @@ def test_confirmed_gated_task_dispatches(tmp_path):
 
 # -- run() -------------------------------------------------------------------- #
 
+class RaisingAgent:
+    """Plans one task, then every executor dispatch raises."""
+    def __init__(self):
+        self.calls = 0
+    def __call__(self, prompt, **kwargs):
+        self.calls += 1
+        if self.calls == 1:  # commander pass
+            return {"result": '{"tasks": [{"from": ["f001"], "description": "enum", "tier": "enum", "target": "10.0.0.5"}]}'}
+        raise RuntimeError("agent binary not found")  # executor pass
+
+
+def test_executor_failure_does_not_abort_run(tmp_path):
+    s = _store(tmp_path)
+    eng = Engine(s, _scope(), model="m", agent=RaisingAgent())
+    history = eng.run(max_rounds=5)          # must not raise
+    assert sum(len(r.created) for r in history) == 1
+    assert sum(len(r.failed) for r in history) == 1
+    assert sum(len(r.dispatched) for r in history) == 0
+    assert eng.last_errors and "not found" in eng.last_errors[0]
+    # the task is left claimed-but-open for a later run to retry
+    t = s.list_tasks()[0]
+    assert t["to"] is None
+
+
 def test_run_terminates_when_no_new_work(tmp_path):
     s = _store(tmp_path)
     # round 1 proposes one enum task; subsequent rounds propose nothing

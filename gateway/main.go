@@ -31,6 +31,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"encoding/json"
 	"flag"
 	"io"
@@ -127,8 +128,18 @@ func (g *gateway) authenticate(r *http.Request) (principal, bool) {
 	if !strings.HasPrefix(h, pfx) {
 		return principal{}, false
 	}
-	p, ok := g.tokens[strings.TrimSpace(h[len(pfx):])]
-	return p, ok
+	presented := []byte(strings.TrimSpace(h[len(pfx):]))
+	// Constant-time compare against every known token (no early exit on match),
+	// so request timing does not reveal whether — or which — token prefix is
+	// valid. The set of operator tokens is small; O(n) is fine.
+	var found principal
+	ok := false
+	for tok, p := range g.tokens {
+		if subtle.ConstantTimeCompare([]byte(tok), presented) == 1 {
+			found, ok = p, true
+		}
+	}
+	return found, ok
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

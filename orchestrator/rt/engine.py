@@ -134,6 +134,7 @@ def parse_tasks(result: str) -> list[dict]:
 class RoundResult:
     created: list[str] = field(default_factory=list)      # task ids created by plan()
     dispatched: list[str] = field(default_factory=list)   # task ids run by step()
+    failed: list[str] = field(default_factory=list)       # task ids whose executor errored
     skipped_scope: list[str] = field(default_factory=list)  # proposals refused (out of scope)
     pending_confirmation: list[str] = field(default_factory=list)  # gated, awaiting operator
 
@@ -156,13 +157,21 @@ class Engine:
         self._agent = agent
         self.timeout = timeout
         self._attempted: set[str] = set()  # task ids dispatched in the current run()
+        self.last_errors: list[str] = []   # human-readable executor failures, latest run()
 
     # -- commander: propose work ------------------------------------------- #
     def plan(self) -> RoundResult:
         res = RoundResult()
-        envelope = self._agent(
-            render(self.store, "command"), model=self.model, timeout=self.timeout,
-        )
+        try:
+            envelope = self._agent(
+                render(self.store, "command"), model=self.model, timeout=self.timeout,
+            )
+        except Exception as e:
+            # The commander is the planner; if its agent is down there is nothing
+            # to propose this round. Record it and let run() wind down cleanly
+            # rather than crashing the engagement.
+            self.last_errors.append(f"commander: {e}")
+            return res
         for spec in parse_tasks(envelope.get("result", "")):
             target = spec["target"]
             # The Engine — not the LLM — enforces scope before any write.
@@ -194,22 +203,32 @@ class Engine:
                 continue
             self._attempted.add(task["id"])
             template = TIER_TEMPLATE.get(task["risk_tier"], "recon")
-            self.store.claim_task(task["id"], worker=template)
-            prompt = render_task(self.store, template, task)
-            # The executor records its own findings via the `rt` CLI (the sapper
-            # model). It is told which engagement store to write to via env; the
-            # findings it writes are picked up when the next round re-reads graph.
-            env_note = f"Use the rt CLI with --store {self.store.root} for all graph writes."
-            self._agent(
-                prompt, model=self.model, timeout=self.timeout,
-                cwd=self.store.root.parent, append_system=env_note,
-            )
-            res.dispatched.append(task["id"])
+            # One executor failing (agent missing, timeout, non-zero exit) must
+            # not abort the engagement. Isolate it: record the failure and move
+            # on. The task stays claimed-but-open and is retried on the next
+            # `rt run` (a fresh attempted-set), so a transient failure self-heals
+            # without spinning within this run.
+            try:
+                self.store.claim_task(task["id"], worker=template)
+                prompt = render_task(self.store, template, task)
+                # The executor records its own findings via the `rt` CLI (the
+                # sapper model). It is told which engagement store to write to;
+                # findings it writes are picked up when the next round re-reads.
+                env_note = f"Use the rt CLI with --store {self.store.root} for all graph writes."
+                self._agent(
+                    prompt, model=self.model, timeout=self.timeout,
+                    cwd=self.store.root.parent, append_system=env_note,
+                )
+                res.dispatched.append(task["id"])
+            except Exception as e:
+                res.failed.append(task["id"])
+                self.last_errors.append(f"{task['id']}: {e}")
         return res
 
     # -- the loop ---------------------------------------------------------- #
     def run(self, *, max_rounds: int = 20) -> list[RoundResult]:
         self._attempted = set()
+        self.last_errors = []
         history: list[RoundResult] = []
         for _ in range(max_rounds):
             res = self.plan()
