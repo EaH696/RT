@@ -1,0 +1,12 @@
+{
+  "engagement_id": "ACME-2026-01",
+  "allowed_cidrs": ["203.0.113.0/24"],
+  "allowed_domains": ["app.client.com", "api.client.com"],
+  "excluded_cidrs": ["203.0.113.9/32"],
+  "excluded_domains": ["mail.client.com"],
+  "window_start": "2026-12-01T00:00:00+08:00",
+  "window_end": "2026-12-07T23:59:59+08:00",
+  "max_rps": 50,
+  "signed_by": null,
+  "signature": null
+}
