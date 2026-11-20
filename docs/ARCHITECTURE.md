@@ -149,8 +149,11 @@ only on the client method signatures, which mirror the proto service methods.
    already persists (SQLite default, Postgres backend); what remains is moving
    the engagement graph (findings + tasks) off the filesystem into Postgres,
    and Neo4j for attack-graph queries at scale.
-3. **Operator console** (`console/`): engagement view, live attack graph, and
-   the approval queue backed by `gateway/`.
+3. **Operator console — DONE for single-appliance** (`rt serve`): a stdlib web
+   UI showing the engagement, findings by severity, the task graph, the live
+   **approval queue** (confirm exploit tasks from the browser), and the audit
+   chain-integrity badge. The Go `gateway/` remains the production edge (auth,
+   TLS, multi-engagement) in front of it.
 4. **Commander auto-planning:** close the loop — the commander agent proposes
    tasks from new findings; executors run them; gated ones queue to the console.
 5. **Tool adapter library:** grow `sandbox/adapters.go` (nmap/nuclei present) —

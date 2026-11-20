@@ -197,6 +197,19 @@ def cmd_audit(args) -> int:
     return 0
 
 
+def cmd_serve(args) -> int:
+    from .console import serve
+    dsn = getattr(args, "audit", None) or str(Path(args.store) / "audit.sqlite")
+    httpd = serve(args.store, audit_dsn=dsn, host=args.host, port=args.port)
+    print(f"RT operator console on http://{args.host}:{args.port}  (store: {args.store})")
+    print("Ctrl-C to stop.")
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        httpd.shutdown()
+    return 0
+
+
 def cmd_report(args) -> int:
     s = _store(args); s.require()
     print(findings_mod.render_markdown(s))
@@ -237,6 +250,11 @@ def build_parser() -> argparse.ArgumentParser:
     for name, fn in (("status", cmd_status), ("graph", cmd_graph),
                      ("frontier", cmd_frontier), ("queue", cmd_queue), ("report", cmd_report)):
         sp = sub.add_parser(name); sp.set_defaults(func=fn)
+
+    sv = sub.add_parser("serve", help="run the operator console web UI")
+    sv.add_argument("--host", default="127.0.0.1")
+    sv.add_argument("--port", type=int, default=8900)
+    sv.set_defaults(func=cmd_serve)
 
     r = sub.add_parser("run", help="drive the durable engagement loop")
     r.add_argument("--model", default="local-default")

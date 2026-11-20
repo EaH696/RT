@@ -20,4 +20,4 @@ where = ["."]
 include = ["rt*"]
 
 [tool.setuptools.package-data]
-rt = ["templates/*.md", "knowledge/entries/*.json"]
+rt = ["templates/*.md", "templates/*.html", "knowledge/entries/*.json"]
