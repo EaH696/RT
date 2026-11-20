@@ -28,9 +28,10 @@ services:
     # orchestrator's `rt serve` console backends. Copy the *.example.json in
     # ./gateway to real registry.json / tokens.json (with long random tokens)
     # and mount TLS material before any real engagement.
-    command: ["-addr", ":8080", "-registry", "/cfg/registry.json", "-tokens", "/cfg/tokens.json"]
+    command: ["-addr", ":8080", "-registry", "/cfg/registry.json", "-tokens", "/cfg/tokens.json", "-console", "/console/index.html"]
     volumes:
       - ./gateway:/cfg:ro
+      - ../console:/console:ro
     depends_on: [policy-gate]
     ports:
       - "8080:8080"

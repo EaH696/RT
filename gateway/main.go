@@ -62,6 +62,7 @@ type gateway struct {
 	registry map[string]string            // engagement id -> backend base URL
 	proxies  map[string]*httputil.ReverseProxy
 	tokens   map[string]principal         // bearer token -> principal
+	console  []byte                       // operator console HTML, served at / (optional)
 }
 
 func loadRegistry(path string) (map[string]string, error) {
@@ -228,6 +229,16 @@ func (g *gateway) routes() *http.ServeMux {
 	})
 	mux.HandleFunc("GET /api/engagements", g.listEngagements)
 	mux.HandleFunc("/engagements/{id}/", g.proxy)
+	// Operator console (static HTML, served same-origin so its API calls need no
+	// CORS). The page carries no secrets; the APIs it calls stay authenticated.
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		if g.console == nil {
+			writeJSON(w, http.StatusOK, map[string]string{"service": "rt-gateway", "console": "not configured (-console)"})
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(g.console)
+	})
 	return mux
 }
 
@@ -239,6 +250,7 @@ func main() {
 	tokensPath := flag.String("tokens", "tokens.json", "bearer token -> operator JSON")
 	tlsCert := flag.String("tls-cert", "", "TLS certificate file (enables HTTPS)")
 	tlsKey := flag.String("tls-key", "", "TLS key file")
+	consolePath := flag.String("console", "", "path to the operator console HTML to serve at /")
 	flag.Parse()
 
 	registry, err := loadRegistry(*registryPath)
@@ -255,6 +267,13 @@ func main() {
 	g, err := newGateway(registry, tokens)
 	if err != nil {
 		log.Fatalf("gateway: %v", err)
+	}
+	if *consolePath != "" {
+		html, err := os.ReadFile(*consolePath)
+		if err != nil {
+			log.Fatalf("console: %v", err)
+		}
+		g.console = html
 	}
 
 	srv := &http.Server{Addr: *addr, Handler: g.routes()}

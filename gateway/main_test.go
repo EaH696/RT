@@ -144,6 +144,24 @@ func TestListEngagements(t *testing.T) {
 	}
 }
 
+func TestConsoleServedAtRoot(t *testing.T) {
+	be := newBackend(&seen{})
+	defer be.Close()
+	g := testGateway(t, be.URL)
+	g.console = []byte("<!doctype html><title>RT</title>")
+	h := g.routes()
+	w := do(t, h, "GET", "/", "", "") // static page needs no auth
+	if w.Code != http.StatusOK {
+		t.Fatalf("console: want 200, got %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Fatalf("console content-type = %q, want text/html", ct)
+	}
+	if !strings.Contains(w.Body.String(), "RT") {
+		t.Fatal("console body not served")
+	}
+}
+
 func TestHealthz(t *testing.T) {
 	be := newBackend(&seen{})
 	defer be.Close()
