@@ -55,9 +55,10 @@ def test_exploit_task_requires_target(tmp_path):
 
 
 def test_scope_in_out(tmp_path):
+    from rt import _ed25519
     sc = Scope(engagement_id="T", allowed_cidrs=["10.0.0.0/24"],
                excluded_cidrs=["10.0.0.9/32"], allowed_domains=["app.acme.test"])
-    sc.sign("esmadi")
+    sc.sign("esmadi", _ed25519.generate_seed())
     assert sc.verify()
     assert sc.permits("10.0.0.5")
     assert sc.permits("https://app.acme.test/login")

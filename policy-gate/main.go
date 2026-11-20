@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 )
 
 // The policy-gate service. The orchestrator POSTs {"target": "..."} to /check
@@ -14,17 +15,26 @@ import (
 // part is stubbed in this scaffold.
 func main() {
 	scopePath := flag.String("scope", "scope.json", "path to signed scope.json")
+	trustPath := flag.String("trust", "trust.json", "trusted operator public keys (JSON array of hex)")
 	addr := flag.String("addr", ":8700", "listen address")
 	flag.Parse()
 
+	trust, err := loadTrust(*trustPath)
+	if err != nil {
+		log.Fatalf("load trust store: %v", err)
+	}
+	if len(trust) == 0 {
+		log.Fatalf("REFUSING TO START: trust store %s has no operator public keys", *trustPath)
+	}
 	scope, err := loadScope(*scopePath)
 	if err != nil {
 		log.Fatalf("load scope: %v", err)
 	}
-	if !scope.Verify() {
-		log.Fatalf("REFUSING TO START: scope %s has an invalid or missing signature", *scopePath)
+	scope = scope.WithTrust(trust)
+	if !scope.VerifyTrusted(trust) {
+		log.Fatalf("REFUSING TO START: scope %s has an invalid signature or an untrusted signing key", *scopePath)
 	}
-	log.Printf("policy-gate up for engagement %s (scope signed by %v)", scope.EngagementID, deref(scope.SignedBy))
+	log.Printf("policy-gate up for engagement %s (scope signed by %v, key trusted)", scope.EngagementID, deref(scope.SignedBy))
 
 	http.HandleFunc("/check", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -52,6 +62,29 @@ func loadScope(path string) (Scope, error) {
 		return s, err
 	}
 	return s, json.Unmarshal(b, &s)
+}
+
+// loadTrust reads the provisioned operator public keys (hex) into a set.
+func loadTrust(path string) (map[string]bool, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var keys []string
+	if err := json.Unmarshal(b, &keys); err != nil {
+		return nil, err
+	}
+	trust := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		if k = trimKey(k); k != "" {
+			trust[k] = true
+		}
+	}
+	return trust, nil
+}
+
+func trimKey(k string) string {
+	return strings.TrimSpace(k)
 }
 
 func deref(s *string) string {

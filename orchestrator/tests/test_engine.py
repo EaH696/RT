@@ -12,9 +12,10 @@ from rt.engine import Engine, parse_tasks
 
 
 def _scope():
+    from rt import _ed25519
     s = Scope(engagement_id="TEST-1", allowed_cidrs=["10.0.0.0/24"],
               excluded_cidrs=["10.0.0.9/32"])
-    s.sign("tester")
+    s.sign("tester", _ed25519.generate_seed())
     return s
 
 

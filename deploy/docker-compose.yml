@@ -6,7 +6,11 @@
 services:
   policy-gate:
     build: ../policy-gate
-    command: ["-scope", "/scope/scope.json", "-addr", ":8700"]
+    # -trust is the provisioned set of operator Ed25519 public keys (hex). The
+    # gate refuses to start, and refuses every target, unless scope.json is
+    # signed by a key in this store. Generate keys with `rt keygen`; put the
+    # .pub hex into ./scope/trust.json as a JSON array.
+    command: ["-scope", "/scope/scope.json", "-trust", "/scope/trust.json", "-addr", ":8700"]
     volumes:
       - ./scope:/scope:ro
     ports:

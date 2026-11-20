@@ -53,6 +53,24 @@ def cmd_init(args) -> int:
     return 0
 
 
+def cmd_keygen(args) -> int:
+    import os
+    from . import _ed25519
+    seed = _ed25519.generate_seed()
+    pub = _ed25519.public_key(seed)
+    key_path = Path(f"{args.out}.key")
+    pub_path = Path(f"{args.out}.pub")
+    if key_path.exists() and not args.force:
+        raise RTError(f"{key_path} exists — refusing to overwrite (use --force)")
+    key_path.write_text(seed.hex() + "\n", encoding="utf-8")
+    os.chmod(key_path, 0o600)
+    pub_path.write_text(pub.hex() + "\n", encoding="utf-8")
+    print(f"wrote private seed  {key_path} (mode 0600 — keep it secret)")
+    print(f"wrote public key    {pub_path}")
+    print(f"public key: {pub.hex()}")
+    return 0
+
+
 def cmd_scope(args) -> int:
     path = Path(args.file)
     if args.scope_cmd == "new":
@@ -66,10 +84,16 @@ def cmd_scope(args) -> int:
         scope.save(path)
         print(f"wrote unsigned scope to {path} — review it, then `rt scope sign`")
     elif args.scope_cmd == "sign":
+        key_path = Path(args.key)
+        if not key_path.exists():
+            raise RTError(f"signing key {key_path} not found — generate one with `rt keygen`")
+        seed = key_path.read_text(encoding="utf-8").strip()
         scope = Scope.load(path)
-        scope.sign(args.operator)
+        scope.sign(args.operator, seed)
         scope.save(path)
-        print(f"scope signed by {args.operator}: {scope.signature[:16]}…")
+        print(f"scope signed by {args.operator} (ed25519)")
+        print(f"  public key: {scope.public_key}")
+        print(f"  provision this key in the policy-gate trust store (`-trust`) before use")
     elif args.scope_cmd == "check":
         scope = Scope.load(path)
         ok = scope.permits(args.target)
@@ -219,6 +243,11 @@ def build_parser() -> argparse.ArgumentParser:
                         "or a postgres:// URL")
     sub = p.add_subparsers(dest="cmd", required=True)
 
+    kg = sub.add_parser("keygen", help="generate an operator Ed25519 signing key")
+    kg.add_argument("--out", default="operator", help="output prefix (<out>.key, <out>.pub)")
+    kg.add_argument("--force", action="store_true")
+    kg.set_defaults(func=cmd_keygen)
+
     i = sub.add_parser("init"); i.add_argument("--engagement", required=True)
     i.add_argument("--objective", required=True); i.add_argument("--scope", required=True)
     i.set_defaults(func=cmd_init)
@@ -228,6 +257,7 @@ def build_parser() -> argparse.ArgumentParser:
     scn.add_argument("--allow", action="append"); scn.add_argument("--exclude", action="append")
     scn.add_argument("--file", default="scope.json")
     scsign = scs.add_parser("sign"); scsign.add_argument("--operator", required=True)
+    scsign.add_argument("--key", required=True, help="operator Ed25519 seed file (`rt keygen`)")
     scsign.add_argument("--file", default="scope.json")
     scchk = scs.add_parser("check"); scchk.add_argument("target")
     scchk.add_argument("--file", default="scope.json")

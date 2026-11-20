@@ -10,7 +10,7 @@
 package main
 
 import (
-	"crypto/sha256"
+	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -31,7 +31,20 @@ type Scope struct {
 	WindowEnd      *string  `json:"window_end"`
 	MaxRPS         int      `json:"max_rps"`
 	SignedBy       *string  `json:"signed_by"`
+	SigAlg         *string  `json:"sig_alg"`
+	PublicKey      *string  `json:"public_key"`
 	Signature      *string  `json:"signature"`
+
+	// trust is the provisioned set of accepted operator public keys (hex). Set
+	// at load time from the gate's trust store; never serialized. Decide() uses
+	// it so an unknown signing key cannot authorize an engagement.
+	trust map[string]bool
+}
+
+// WithTrust returns a copy of the scope bound to a trust store.
+func (s Scope) WithTrust(trust map[string]bool) Scope {
+	s.trust = trust
+	return s
 }
 
 // canonical serializes everything except the signature, matching the Python
@@ -48,23 +61,47 @@ func (s Scope) canonical() (string, error) {
 		"window_end":       s.WindowEnd,
 		"max_rps":          s.MaxRPS,
 		"signed_by":        s.SignedBy,
+		"sig_alg":          s.SigAlg,
+		"public_key":       s.PublicKey,
 	}
 	b, err := marshalSorted(m)
 	return string(b), err
 }
 
-// Verify checks the ROE signature. A scope that does not verify must never be
-// used to authorize an engagement.
+// Verify checks the ROE's Ed25519 signature against the embedded public key.
+// This proves authenticity but NOT authorization — use VerifyTrusted on the
+// appliance so an unknown key cannot authorize an engagement. A scope that
+// does not verify must never be used.
 func (s Scope) Verify() bool {
-	if s.Signature == nil {
+	if s.Signature == nil || s.PublicKey == nil || s.SigAlg == nil || *s.SigAlg != "ed25519" {
+		return false
+	}
+	pub, err := hex.DecodeString(*s.PublicKey)
+	if err != nil || len(pub) != ed25519.PublicKeySize {
+		return false
+	}
+	sig, err := hex.DecodeString(*s.Signature)
+	if err != nil || len(sig) != ed25519.SignatureSize {
 		return false
 	}
 	c, err := s.canonical()
 	if err != nil {
 		return false
 	}
-	sum := sha256.Sum256([]byte(c))
-	return hex.EncodeToString(sum[:]) == *s.Signature
+	return ed25519.Verify(ed25519.PublicKey(pub), []byte(c), sig)
+}
+
+// VerifyTrusted additionally requires the signing key to be in the provisioned
+// trust store (operator public keys, hex). This is the authorization anchor:
+// a cryptographically valid signature from an unknown key is still rejected.
+func (s Scope) VerifyTrusted(trust map[string]bool) bool {
+	if !s.Verify() {
+		return false
+	}
+	if len(trust) == 0 {
+		return false // no trusted keys configured => nothing is authorized
+	}
+	return s.PublicKey != nil && trust[*s.PublicKey]
 }
 
 // Permits reports whether target (IP, host, or URL host) is in scope.
@@ -106,8 +143,8 @@ type Decision struct {
 }
 
 func (s Scope) Decide(target string) Decision {
-	if !s.Verify() {
-		return Decision{target, false, "scope signature invalid"}
+	if !s.VerifyTrusted(s.trust) {
+		return Decision{target, false, "scope signature invalid or signing key not trusted"}
 	}
 	if s.Permits(target) {
 		return Decision{target, true, "in scope"}
